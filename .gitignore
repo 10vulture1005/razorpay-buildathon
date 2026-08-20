@@ -1,0 +1,26 @@
+# Secrets — never commit
+.env
+.env.local
+
+# Local databases (Postgres is the real datastore; sqlite only for throwaway dev/test)
+*.db
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
