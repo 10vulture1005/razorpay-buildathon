@@ -1,0 +1,16 @@
+# Policy configuration — versioned, release-able independently of app code.
+# Every policy decision audit row records this version + the full snapshot below,
+# so any past decision is reproducible in a dispute (PRODUCTION.md B1-11).
+version: 2026.08.23-p1
+
+max_retries: 3
+max_recovery_window_days: 7
+max_messages_per_day: 1
+escalation_min_value: 100000
+
+# India fair-practice norms (RBI): no outbound collection outreach to customers
+# before 08:00 or after 19:00 IST. Gates customer-facing sends only; internal
+# actions (escalate/stop/wait) are exempt.
+contact_hours_start: 8   # inclusive, IST
+contact_hours_end: 19    # exclusive, IST
+enforce_contact_hours: true
