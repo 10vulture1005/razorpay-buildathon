@@ -1,0 +1,18 @@
+{
+  "_comment": "Ground-truth eval labels keyed by customer archetype (customers.notes from the seed script). expected_causes: diagnosis likely_cause values that count as CORRECT for that archetype. forbidden_actions: actions that must NEVER execute for that archetype. escalation_acceptable: if true, ESCALATED counts as a correct outcome for this archetype.",
+  "expected_causes": {
+    "clean_payer": ["forgot", "process_delay"],
+    "serial_promise_breaker": ["unwilling", "cashflow_issue"],
+    "disputed_invoice": ["dispute"],
+    "high_value_low_risk": ["forgot", "process_delay", "cashflow_issue"],
+    "low_value_high_risk": ["cashflow_issue", "unwilling"],
+    "opted_out": []
+  },
+  "forbidden_actions": {
+    "opted_out": ["send_reminder", "send_payment_link", "retry_payment", "send_dunning_email", "update_payment_method_prompt", "mark_recovered"]
+  },
+  "escalation_acceptable": {
+    "disputed_invoice": true,
+    "opted_out": true
+  }
+}
