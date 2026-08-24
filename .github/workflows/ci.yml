@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  secrets:
+    name: gitleaks (secret scanning)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test:
+    name: pytest + policy-violation gate
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite:///./.ci_recovery.db
+      API_KEYS: ci-admin-key:admin,ci-run-key:run,read,ci-read-key:read
+      ENVIRONMENT: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run full test suite
+        run: python -m pytest tests/ -q
+      - name: Policy violation rate must be exactly 0
+        run: python scripts/check_policy_violations.py
+
+  migration-drift:
+    name: alembic autogenerate diff must be empty
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: recovery
+          POSTGRES_PASSWORD: recovery
+          POSTGRES_DB: recovery
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg2://recovery:recovery@localhost:5432/recovery
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt psycopg2-binary==2.9.9
+      - run: alembic upgrade head
+      - name: Autogenerate must produce an empty migration (models == schema)
+        run: |
+          alembic revision --autogenerate -m drift_check --rev-id drift_check
+          ! grep -qE "op\.(create|drop|add|remove)" migrations/versions/*drift_check.py || {
+            echo "::error::Models drifted from migrations — commit a new migration"; exit 1; }
