@@ -1,0 +1,18 @@
+# Extends gitleaks defaults; CI fails on any detected secret.
+title = "Revenue Recovery Autopilot secret scanning"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documentation placeholders and test fixtures"
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)tests/''',
+]
+regexes = [
+  '''<set-via-secret-manager>''',
+  '''change-me-[a-z-]+''',
+  '''dev-(admin|run|read)-key''',
+  '''(test|ci)-(admin|run|read)-key''',
+]
