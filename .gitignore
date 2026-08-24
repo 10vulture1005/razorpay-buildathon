@@ -24,3 +24,13 @@ out/
 .DS_Store
 .idea/
 .vscode/
+
+# Agent / tool scaffolding
+.agent/
+.claude/
+.cursor/
+.gemini/
+.impeccable/
+.kiro/
+.opencode/
+.pi/
