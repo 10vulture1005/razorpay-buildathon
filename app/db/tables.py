@@ -97,6 +97,11 @@ class Case(Base):
     next_allowed_action_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
     detected_at: Mapped[str] = mapped_column(DateTime(timezone=True))
     amount_at_risk: Mapped[float] = mapped_column(Float)
+    # Synthetic-batch self-cure profile (R0 eval integrity): decided at
+    # case-GENERATION time, identical regardless of what the agent does, so
+    # recovery comparisons aren't contaminated by the eval runner.
+    will_self_cure: Mapped[bool] = mapped_column(Boolean, default=False)
+    self_cure_day_offset: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[str] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[str] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

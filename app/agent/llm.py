@@ -44,10 +44,11 @@ class MockLLM:
     Refused at construction time when ENVIRONMENT=prod."""
 
     def __init__(self):
-        if config.IS_PROD:
+        if config.IS_PROD or not config.ALLOW_MOCK_ADAPTERS:
             raise RuntimeError(
-                "LLM_PROVIDER=mock is not permitted in production; "
-                "configure LLM_PROVIDER=openrouter with OPENROUTER_API_KEY"
+                "LLM_PROVIDER=mock requires ALLOW_MOCK_ADAPTERS=true (and is never "
+                "permitted in production); configure LLM_PROVIDER=openrouter "
+                "with OPENROUTER_API_KEY for real inference"
             )
 
     def generate_structured(self, schema: type[BaseModel], prompt: dict, tier: str = "frontier") -> BaseModel:

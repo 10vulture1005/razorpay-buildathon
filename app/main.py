@@ -70,6 +70,9 @@ def _verify_schema():
 async def lifespan(_app: FastAPI):
     _prod_startup_guard()
     _verify_schema()
+    from app.observability.provider_status import log_provider_status
+
+    log_provider_status()
     logger.info("startup.complete", extra={"environment": config.ENVIRONMENT})
     yield
     logger.info("shutdown.complete")

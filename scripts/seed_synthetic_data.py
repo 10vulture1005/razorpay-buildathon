@@ -73,6 +73,12 @@ def make_case(session, archetype: str, idx: int):
         amount_at_risk=float(amount),
         messages_sent_date=None,
     )
+    # Self-cure profile is a property of the SYNTHETIC CASE (R0): a clean payer
+    # was always going to pay on day N regardless of intervention. Decided here
+    # at generation time — never by the eval runner based on agent behavior.
+    if archetype == "clean_payer":
+        case.will_self_cure = True
+        case.self_cure_day_offset = random.randint(5, 14)
     session.add(case)
 
     # Payment history: prior invoices with on-time/late pattern.

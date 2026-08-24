@@ -1,3 +1,13 @@
+# Full .env passthrough (R0): provider credentials (OPENROUTER_API_KEY,
+# RAZORPAY_*, EMAIL_PROVIDER, ALLOW_MOCK_ADAPTERS, ...) reach every service.
+# Missing .env is fine for a bare dev boot; explicit entries below win.
+x-app-env: &appenv
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgresql+psycopg2://recovery:recovery@db:5432/recovery
+
 services:
   db:
     image: postgres:16
@@ -19,21 +29,14 @@ services:
   migrate:
     build: .
     command: ["python", "-m", "scripts.migrate", "upgrade", "head"]
-    environment: &appenv
-      DATABASE_URL: postgresql+psycopg2://recovery:recovery@db:5432/recovery
-      ENVIRONMENT: ${ENVIRONMENT:-dev}
-      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
-      API_KEYS: ${API_KEYS:?set API_KEYS in .env}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
-      WRITE_TOOLS_ENABLED: ${WRITE_TOOLS_ENABLED:-true}
+    <<: *appenv
     depends_on:
       db:
         condition: service_healthy
 
   api:
     build: .
-    environment: *appenv
+    <<: *appenv
     ports:
       - "8000:8000"
     depends_on:
@@ -48,7 +51,7 @@ services:
   worker:
     build: .
     command: ["python", "-m", "app.workers.outcome_poller", "30"]
-    environment: *appenv
+    <<: *appenv
     depends_on:
       migrate:
         condition: service_completed_successfully

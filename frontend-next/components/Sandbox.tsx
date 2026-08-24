@@ -121,7 +121,9 @@ export default function Sandbox() {
     }
   };
 
-  const openCases = (cases ?? []).filter((c) => OPEN_STATUSES.has(c.status));
+  const openCases = (cases ?? []).filter((c) =>
+    OPEN_STATUSES.has(c.status.toLowerCase()),
+  );
 
   return (
     <main className="sandbox">
@@ -223,8 +225,18 @@ export default function Sandbox() {
                 <tr key={c.case_id}>
                   <td className="mono">{c.case_id}</td>
                   <td>
-                    <span className={`status-pill status-${c.status === "awaiting_outcome" ? "other" : c.status}`}>
-                      {c.status}
+                    <span
+                      className={`status-pill ${
+                        c.status === "RECOVERED"
+                          ? "status-RECOVERED"
+                          : c.status === "ESCALATED"
+                            ? "status-ESCALATED"
+                            : c.status === "STOPPED"
+                              ? "status-STOPPED"
+                              : "status-other"
+                      }`}
+                    >
+                      {c.status.toLowerCase()}
                     </span>
                   </td>
                   <td className="num mono">{inr(c.amount_at_risk)}</td>

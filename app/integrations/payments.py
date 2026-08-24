@@ -47,6 +47,12 @@ def create_payment_link(
 ) -> dict:
     """Creates a Razorpay Payment Link. Amount is in INR; Razorpay expects paise."""
     if config.PAYMENT_PROVIDER == "console":
+        if config.IS_PROD or not config.ALLOW_MOCK_ADAPTERS:
+            raise PaymentProviderError(
+                "PAYMENT_PROVIDER=console requires ALLOW_MOCK_ADAPTERS=true "
+                "(never permitted in production)",
+                retryable=False,
+            )
         logger.info("payments.console_payment_link", extra={"reference_id": reference_id})
         return {
             "provider": "console",

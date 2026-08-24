@@ -31,6 +31,13 @@ def client():
 def _make_awaiting_case(db, suffix, amount=12000.0):
     from app.api.routes_core import invoice_overdue, InvoiceOverdueEvent
 
+    # Module-scoped DB: retire leftovers from earlier tests so counts stay exact.
+    for stale in db.query(Case).filter(
+            Case.id.like("case_inv_pollfb_%"),
+            Case.status == CaseStatus.AWAITING_OUTCOME).all():
+        stale.status = CaseStatus.STOPPED
+    db.commit()
+
     event = InvoiceOverdueEvent(
         invoice_id=f"inv_pollfb_{suffix}", customer_id=f"cust_pollfb_{suffix}", amount=amount
     )

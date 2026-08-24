@@ -159,7 +159,10 @@ def payment_failed(event: PaymentFailedEvent, db: Session = Depends(get_session)
 def list_cases(status: str | None = None, limit: int = 500, db: Session = Depends(get_session)):
     q = db.query(Case)
     if status:
-        q = q.filter(Case.status == status)
+        try:
+            q = q.filter(Case.status == CaseStatus(status.strip().upper()))
+        except ValueError:
+            return []
     return [
         {"case_id": c.id, "customer_id": c.customer_id, "invoice_id": c.invoice_id,
          "status": c.status.value, "amount_at_risk": c.amount_at_risk,

@@ -98,7 +98,16 @@ def _send_sendgrid(to_addr: str, subject: str, body: str) -> dict:
 
 
 def _send_console(to_addr: str, subject: str, body: str) -> dict:
-    """Dev/test echo adapter. Never reachable in production (startup guard)."""
+    """Dev/test echo adapter. Requires ALLOW_MOCK_ADAPTERS=true; never
+    reachable in production (startup guard + this check)."""
+    import app.config as config
+
+    if config.IS_PROD or not config.ALLOW_MOCK_ADAPTERS:
+        raise EmailDeliveryError(
+            "EMAIL_PROVIDER=console requires ALLOW_MOCK_ADAPTERS=true "
+            "(never permitted in production)",
+            retryable=False,
+        )
     logger.info("email.console_delivery", extra={"to": to_addr, "subject": subject})
     return {"provider": "console", "provider_message_id": f"console_{uuid.uuid4().hex[:12]}"}
 

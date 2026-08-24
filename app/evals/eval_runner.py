@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.agent import graph as agent_graph
 from app.db.session import SessionLocal, init_db
-from app.db.tables import AuditLog, Case, CaseStatus, Customer, PolicyDecisionRecord
+from app.db.tables import AuditLog, Case, CaseStatus, Customer, PaymentEvent, PolicyDecisionRecord
 
 TEST_CASES_PATH = Path(__file__).parent / "test_cases.json"
 GROUND_TRUTH_PATH = Path(__file__).parent / "ground_truth.json"
@@ -24,6 +24,38 @@ def run_batch(db: Session, case_ids: list[str]) -> dict:
     return results
 
 
+def _apply_self_cure(db: Session, case_ids: list[str], outcomes: dict[str, str]) -> dict:
+    """R0 eval integrity: apply each synthetic case's OWN self-cure profile,
+    identically for every case regardless of agent behavior or experiment arm.
+
+    A case with will_self_cure=True that the agent did NOT recover by end of
+    batch self-cures here — same rule it would have obeyed in any other arm.
+    Returns aggregate stats + per-case disclosure."""
+    from app.agent.nodes import nodes
+    from app.db.tables import Case, CaseStatus, PaymentEvent
+
+    applied = []
+    total_amount = 0.0
+    for cid in case_ids:
+        if outcomes.get(cid) == "RECOVERED":
+            continue
+        case = db.get(Case, cid)
+        if not case or not case.will_self_cure:
+            continue
+        db.add(PaymentEvent(
+            invoice_id=case.invoice_id, amount_paid=case.amount_at_risk,
+            source="self_cure", consumed=True,
+        ))
+        nodes._audit(db, cid, "self_cure_applied", "system",
+                     {"amount": case.amount_at_risk,
+                      "self_cure_day_offset": case.self_cure_day_offset})
+        nodes.set_status(db, cid, CaseStatus.RECOVERED)
+        outcomes[cid] = "RECOVERED"
+        applied.append(cid)
+        total_amount += case.amount_at_risk
+    return {"cases": applied, "count": len(applied), "amount": round(total_amount, 2)}
+
+
 def evaluate(db: Session, case_ids: list[str]) -> dict:
     # Evals simulate business-hours operation so contact-hours enforcement
     # (real in production) doesn't park the batch when run at night.
@@ -33,6 +65,11 @@ def evaluate(db: Session, case_ids: list[str]) -> dict:
 
     policy_engine._default_now = lambda: datetime(2026, 8, 20, 5, 0, tzinfo=timezone.utc)
     outcomes = run_batch(db, case_ids)
+
+    # R0: self-cure fires identically for every synthetic clean-payer case,
+    # regardless of what the agent did. Applied AFTER the batch so
+    # mark_recovered audit rows reflect genuine agent-driven recoveries only.
+    self_cure = _apply_self_cure(db, case_ids, outcomes)
 
     archetypes = {c.id: (db.get(Customer, c.customer_id).notes or "unknown")
                   for c in db.query(Case).filter(Case.id.in_(case_ids)).all()}
@@ -93,10 +130,11 @@ def evaluate(db: Session, case_ids: list[str]) -> dict:
     for cid, status in outcomes.items():
         by_archetype[archetypes.get(cid, "unknown")][status] += 1
 
-    recovered_amount = 0.0
+    # Agent-driven recoveries only (self-cure never writes mark_recovered).
+    agent_recovered_amount = 0.0
     rec_rows = (db.query(AuditLog)
                 .filter(AuditLog.case_id.in_(case_ids), AuditLog.event_type == "mark_recovered").all())
-    recovered_amount = sum((r.payload or {}).get("amount", 0) for r in rec_rows)
+    agent_recovered_amount = sum((r.payload or {}).get("amount", 0) for r in rec_rows)
 
     at_risk = sum(c.amount_at_risk for c in db.query(Case).filter(Case.id.in_(case_ids)).all())
 
@@ -155,9 +193,29 @@ def evaluate(db: Session, case_ids: list[str]) -> dict:
         },
         "tool_success_rate_per_tool": {
             k: {"success": v[0], "total": v[1]} for k, v in tool_success.items()},
-        "recovered_amount": recovered_amount,
+        "recovered_amount": round(agent_recovered_amount + self_cure["amount"], 2),
         "revenue_at_risk": at_risk,
-        "recovery_rate": round(recovered_amount / at_risk, 4) if at_risk else 0,
+        # R0: split recovery so a demo number is never pre-baked. agent_recovered
+        # reflects what the intervention achieved; self_cured cases would have
+        # recovered anyway (their profile was fixed at generation time).
+        "recovery_breakdown": {
+            "agent_recovered": {
+                "cases": len(rec_rows),
+                "amount": round(agent_recovered_amount, 2),
+                "rate": round(agent_recovered_amount / at_risk, 4) if at_risk else 0,
+            },
+            "self_cured": self_cure,
+            "total_rate": round(
+                (agent_recovered_amount + self_cure["amount"]) / at_risk, 4
+            ) if at_risk else 0,
+            "disclosure": (
+                f"{self_cure['count']} case(s) carry a generation-time self-cure "
+                "profile (clean payers who were always going to pay); they are "
+                "counted separately and NOT attributed to the agent."
+                if self_cure["count"] else "no self-curing cases in this batch"
+            ),
+        },
+        "recovery_rate": round((agent_recovered_amount + self_cure["amount"]) / at_risk, 4) if at_risk else 0,
     }
 
 

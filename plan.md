@@ -280,3 +280,38 @@ AI handles contextual reasoning: diagnosing non-payment causes, reading customer
 Deterministic code handles everything money touches: calculations, policy enforcement, retry limits, state transitions, idempotency, payment execution, audit logging.
 
 This separation is what makes the system safe and credible — the LLM proposes, code validates and executes.
+---
+
+## 11. Known Gaps — Not Yet Built (R0 scope decisions)
+
+These are deliberate, scoped deferrals — documented so they're sequenced decisions,
+not surprises discovered mid-demo or mid-sale.
+
+**Multi-tenancy / real auth.** Currently static shared API keys with scopes; no
+per-org isolation. No buyer puts receivables data behind a shared key.
+*Scope:* org model + row-level data isolation on every table, per-org API keys
+or OAuth, admin UI for key rotation (~2-3 weeks).
+*Interim pilot workaround:* single-tenant deployments — one isolated stack
+(DB + API keys) per pilot customer; acceptable to ~3-5 pilots before this blocks.
+
+**SMS/voice channel.** Only email delivery is implemented (`write_tools` raises
+on SMS). Indian B2B collections ICP often expects SMS/WhatsApp touchpoints.
+*Scope:* MSG91/Gupshup adapter following the email adapter pattern + policy
+config for channel selection + consent handling (~1 week per channel).
+*Interim workaround:* email-only recovery; payment links still reach customers
+via Razorpay's own SMS notify when links are sent.
+
+**ERP integration (Tally/Zoho/QuickBooks).** Invoices enter via manual event
+POSTs. ERP sync is plausibly the actual buying trigger for this category — a
+tool that doesn't read invoices from where finance already keeps them demands
+manual data entry, which kills adoption regardless of agent quality.
+*Scope:* read-only invoice/customer sync per ERP (Tally XML/Zoho Books API/
+QuickBooks API) + overdue-event emission (~2 weeks for the first ERP, ~1 week
+each after the sync framework exists).
+*Interim workaround:* CSV import script + webhook POST from customer's billing
+export cron; workable for a pilot, not for retention.
+
+**Payment-failure webhook ingestion (public).** `POST /events/payment-failed`
+exists as an internal-scoped endpoint (our systems call it); receiving signed
+webhooks directly from gateways at public internet exposure is deferred until
+replay/rate-limit hardening is exercised in production traffic.
