@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: recovery
+      POSTGRES_PASSWORD: recovery
+      POSTGRES_DB: recovery
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recovery"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Migrations run as an explicit one-shot step BEFORE api/worker start (P1-6).
+  migrate:
+    build: .
+    command: ["python", "-m", "scripts.migrate", "upgrade", "head"]
+    environment: &appenv
+      DATABASE_URL: postgresql+psycopg2://recovery:recovery@db:5432/recovery
+      ENVIRONMENT: ${ENVIRONMENT:-dev}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      API_KEYS: ${API_KEYS:?set API_KEYS in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:-}
+      WRITE_TOOLS_ENABLED: ${WRITE_TOOLS_ENABLED:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: .
+    environment: *appenv
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.workers.outcome_poller", "30"]
+    environment: *appenv
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pgdata:
