@@ -11,6 +11,7 @@ downstream: every response must parse into the schema.
 """
 import contextvars
 import json
+import logging
 import os
 import re
 
@@ -18,6 +19,8 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 import app.config as config
+
+logger = logging.getLogger("app.agent.llm")
 
 # Audit reproducibility (B4): every LLM-driven decision records which prompt
 # generation produced it.
@@ -160,14 +163,20 @@ class OpenRouterLLM:
 
     TIER_ENV_KEYS = {"frontier": "MODEL_FRONTIER", "small": "MODEL_SMALL"}
 
-    def __init__(self):
-        self.api_key = os.environ.get("OPENROUTER_API_KEY") or ""
+    def __init__(self, api_key: str | None = None, base_url: str | None = None,
+                 model_map: dict[str, str] | None = None):
+        self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY") or ""
         if not self.api_key:
             raise RuntimeError("LLM_PROVIDER=openrouter requires OPENROUTER_API_KEY")
-        self.base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+        self.base_url = (base_url or os.environ.get("OPENROUTER_BASE_URL",
+                         "https://openrouter.ai/api/v1")).rstrip("/")
         self.timeout_s = float(os.environ.get("OPENROUTER_TIMEOUT_S", "30"))
+        # Provider-override map for fallback clients: {"frontier": "model-id"}
+        self._model_overrides = model_map or {}
 
     def _model_for(self, tier: str) -> str:
+        if tier in self._model_overrides:
+            return self._model_overrides[tier]
         env_key = self.TIER_ENV_KEYS.get(tier)
         # OPENROUTER_MODEL (legacy single-model var) overrides the frontier tier.
         model = ""
@@ -209,32 +218,58 @@ class OpenRouterLLM:
                 "comparing categories, type=line for trends over dates, type=pie for "
                 "shares of a whole (one series only)."
             )
-        resp = httpx.post(
-            f"{self.base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "HTTP-Referer": os.environ.get("OPENROUTER_SITE_URL", "http://localhost:8000"),
-                "X-Title": "Revenue Recovery Autopilot",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": json.dumps(prompt)},
-                ],
-                "temperature": 0.2,
-                # Reasoning models burn tokens on hidden/visible thinking
-                # before emitting the JSON — leave headroom so it never
-                # truncates mid-object (both chat schemas).
-                "max_tokens": 2048 if schema.__name__.startswith("ChatReply") else 1024,
-                "response_format": {"type": "json_object"},
-                # Ask OpenRouter to include authoritative cost accounting.
-                "usage": {"include": True},
-            },
-            timeout=self.timeout_s,
-        )
-        if resp.status_code != 200:
-            raise StructuredOutputFailure(f"openrouter {resp.status_code}: {resp.text[:300]}")
+        # 429 handling: free tiers enforce per-minute AND daily caps. A burst
+        # limit clears in seconds, so wait-and-retry here instead of failing
+        # the whole agent run. Daily caps (retry-after absent / huge) fail fast.
+        import time as _time
+
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(prompt)},
+            ],
+            "temperature": 0.2,
+            # Reasoning models burn tokens on hidden/visible thinking
+            # before emitting the JSON — leave headroom so it never
+            # truncates mid-object (both chat schemas).
+            "max_tokens": 2048 if schema.__name__.startswith("ChatReply") else 1024,
+            "response_format": {"type": "json_object"},
+            # Ask OpenRouter to include authoritative cost accounting.
+            "usage": {"include": True},
+        }
+        resp = None
+        for attempt in range(3):
+            resp = httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "HTTP-Referer": os.environ.get("OPENROUTER_SITE_URL", "http://localhost:8000"),
+                    "X-Title": "Revenue Recovery Autopilot",
+                },
+                json=payload,
+                timeout=self.timeout_s,
+            )
+            if resp.status_code != 429:
+                break
+            retry_after = resp.headers.get("retry-after")
+            if retry_after is not None:
+                try:
+                    delay = min(float(retry_after), 30.0)
+                except ValueError:
+                    delay = 5.0
+            else:
+                try:
+                    reset = int((resp.json().get("error", {}).get("metadata", {})
+                                 .get("headers", {}).get("X-RateLimit-Reset", "0") or 0)) / 1000.0
+                except Exception:
+                    reset = 0
+                delay = min(max(reset - _time.time(), 2.0), 30.0) if 0 < reset <= 120 else 5.0 * (attempt + 1)
+            logger.warning("openrouter 429 | backoff %.1fs (attempt %d)", delay, attempt + 1)
+            _time.sleep(delay)
+        if resp is None or resp.status_code != 200:
+            raise StructuredOutputFailure(
+                f"openrouter {getattr(resp, 'status_code', '??')}: {getattr(resp, 'text', '')[:300]}")
         body = resp.json()
         u = body.get("usage") or {}
         cost = u.get("cost")
@@ -247,21 +282,32 @@ class OpenRouterLLM:
             "cost_est_usd": float(cost),
         })
         content = body["choices"][0]["message"]["content"]
-        # Leniency boundary: only display-only chat replies may be salvaged
-        # from prose/fenced output. Decision schemas (diagnose/select_action)
-        # require strict JSON — see test_openrouter_llm.py.
-        if schema.__name__ == "ChatReply":
+        if not isinstance(content, str) or not content.strip():
+            # Reasoning models occasionally return thinking-only responses
+            # with null/empty content. Treat as a clean retryable failure,
+            # never a crash.
+            raise StructuredOutputFailure(
+                f"openrouter returned empty content (finish_reason="
+                f"{body['choices'][0].get('finish_reason')})")
+        # Transport-decode wrapper noise (markdown fences, stray prose around a
+        # single JSON object — free models do this constantly), then require a
+        # COMPLETE valid JSON object. The safety invariant is unchanged: broken,
+        # truncated, or unparseable output still fails validation and never
+        # falls through with defaults.
+        data = None
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            # Some models emit literal newlines/tabs INSIDE string values
+            # (multi-line message bodies). strict=False tolerates them.
             try:
-                data = _parse_json_lenient(content)
-            except ValueError as e:
-                raise StructuredOutputFailure(
-                    f"non-JSON model output: {content[:200]}") from e
-        else:
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError as e:
-                raise StructuredOutputFailure(
-                    f"non-JSON model output: {content[:200]}") from e
+                data = json.loads(content, strict=False)
+            except json.JSONDecodeError:
+                try:
+                    data = _parse_json_lenient(content)
+                except ValueError as e:
+                    raise StructuredOutputFailure(
+                        f"non-JSON model output: {content[:200]}") from e
         try:
             return schema.model_validate(data)
         except ValidationError as e:
@@ -281,16 +327,59 @@ def _client(tier: str = "frontier"):
 
 
 _CLIENT = _client()
+_FALLBACK_CLIENT: OpenRouterLLM | None = None
+_FALLBACK_CHECKED = False
+
+
+def _fallback_client() -> OpenRouterLLM | None:
+    """Lazily-built NVIDIA fallback client (any OpenAI-compatible host works).
+    Returns None when no fallback is configured. Built once; model ids come
+    from NVIDIA_MODEL / NVIDIA_SMALL_MODEL with MODEL_* as defaults."""
+    global _FALLBACK_CLIENT, _FALLBACK_CHECKED
+    if _FALLBACK_CHECKED:
+        return _FALLBACK_CLIENT
+    _FALLBACK_CHECKED = True
+    api_key = getattr(config, "NVIDIA_API_KEY", "")
+    if not api_key or os.environ.get("LLM_PROVIDER") != "openrouter":
+        return None
+    base_url = getattr(config, "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+    # llama-3.3-70b is the tested-fast choice (~20s); deepseek-v4-flash works
+    # but has exhibited multi-minute cold starts under congestion.
+    frontier = os.environ.get("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
+    small = os.environ.get("NVIDIA_SMALL_MODEL", frontier)
+    try:
+        _FALLBACK_CLIENT = OpenRouterLLM(
+            api_key=api_key, base_url=base_url,
+            model_map={"frontier": frontier, "small": small},
+        )
+        # Fallback hosts (NVIDIA) can cold-start slowly; only used when the
+        # primary already failed, so a long timeout is acceptable here.
+        _FALLBACK_CLIENT.timeout_s = 180.0
+        logger.warning("llm.fallback_armed | provider=nvidia models=%s/%s", frontier, small)
+    except RuntimeError:
+        _FALLBACK_CLIENT = None
+    return _FALLBACK_CLIENT
 
 
 def call_structured(schema: type[BaseModel], prompt: dict, tier: str = "frontier") -> BaseModel:
     """Validate against the schema at the call site. Retry once on failure,
-    then raise — never fall through with defaults."""
+    then fall back to the secondary provider (e.g. NVIDIA) when configured.
+    Never falls through with defaults."""
     last_err: Exception | None = None
     _last_usage.set(None)
     for _attempt in range(2):
         try:
             raw = _CLIENT.generate_structured(schema, prompt, tier=tier)
+            return schema.model_validate(raw.model_dump() if isinstance(raw, BaseModel) else raw)
+        except (StructuredOutputFailure, ValidationError) as e:
+            last_err = e
+
+    fb = _fallback_client()
+    if fb is not None:
+        logger.warning("llm.fallback_invoked | schema=%s err=%s",
+                       schema.__name__, str(last_err)[:120])
+        try:
+            raw = fb.generate_structured(schema, prompt, tier=tier)
             return schema.model_validate(raw.model_dump() if isinstance(raw, BaseModel) else raw)
         except (StructuredOutputFailure, ValidationError) as e:
             last_err = e

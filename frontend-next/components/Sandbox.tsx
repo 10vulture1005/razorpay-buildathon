@@ -25,6 +25,7 @@ export default function Sandbox() {
   const [customerId, setCustomerId] = useState("cust_acme_corp");
   const [companyName, setCompanyName] = useState("Acme Corp");
   const [amount, setAmount] = useState("25000");
+  const [daysOverdue, setDaysOverdue] = useState("5");
   const [email, setEmail] = useState("finance@acme.example.com");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -71,6 +72,7 @@ export default function Sandbox() {
         amount: amt,
         customer_email: email.trim() || null,
         customer_name: companyName.trim() || null,
+        days_overdue: Math.max(0, Number(daysOverdue) || 0),
       });
       flash(
         "ok",
@@ -189,6 +191,16 @@ export default function Sandbox() {
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               required
+            />
+          </label>
+          <label>
+            Days overdue <span className="opt">how late the invoice already is</span>
+            <input
+              type="number"
+              min="0"
+              max="6"
+              value={daysOverdue}
+              onChange={(e) => setDaysOverdue(e.target.value)}
             />
           </label>
           <label>

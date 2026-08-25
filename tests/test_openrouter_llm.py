@@ -54,10 +54,17 @@ def test_request_shape_and_parsing(provider, monkeypatch):
     assert captured["headers"]["Authorization"] == "Bearer sk-test"
 
 
-def test_markdown_fenced_output_rejected(provider, monkeypatch):
-    """Model wraps JSON in fences → must fail validation, never parse leniently."""
+def test_markdown_fenced_output_parsed(provider, monkeypatch):
+    """Fences are transport noise, not semantic content: a COMPLETE valid JSON
+    object inside them must parse. Broken/truncated output must still fail."""
     _capture(monkeypatch, {
-        "choices": [{"message": {"content": '```json\n{"likely_cause":"forgot"}\n```'}}]
+        "choices": [{"message": {"content": '```json\n{"likely_cause":"forgot","confidence":0.7,"reasoning":"ok"}\n```'}}]
+    })
+    result = llm_mod.call_structured(DiagnosisResult, {"context": {}})
+    assert result.likely_cause == "forgot"
+
+    _capture(monkeypatch, {
+        "choices": [{"message": {"content": 'I thought about it ```json\n{"likely_cause":"forgot"}'}}]
     })
     with pytest.raises(StructuredOutputFailure):
         llm_mod.call_structured(DiagnosisResult, {"context": {}})

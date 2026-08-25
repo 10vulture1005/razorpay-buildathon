@@ -54,6 +54,10 @@ class InvoiceOverdueEvent(BaseModel):
     amount: float = Field(gt=0)
     customer_email: str | None = Field(default=None, max_length=255)
     customer_name: str | None = Field(default=None, max_length=255)
+    # How far past due the invoice already is. Billing integrations send this
+    # when their export lags; 0 means "due today". Clamped to the policy
+    # recovery window minus one day so test events never arrive pre-expired.
+    days_overdue: int = Field(default=0, ge=0, le=3650)
 
 
 @router.post("/events/invoice-overdue", dependencies=[Depends(require_scope("run"))])
@@ -74,16 +78,27 @@ def invoice_overdue(event: InvoiceOverdueEvent, db: Session = Depends(get_sessio
                         opted_out=False, notes="auto_registered", email=event.customer_email)
         db.add(cust)
     else:
-        if event.customer_email and not cust.email:
+        # Billing systems re-send the current contact on every event — the
+        # freshest email/name wins over whatever we stored before.
+        if event.customer_email:
             cust.email = event.customer_email
-        if event.customer_name and cust.name.startswith("Auto-registered"):
+        if event.customer_name:
             cust.name = event.customer_name
+    from datetime import timedelta
+
+    from app.policy.policy_engine import load_policy_config
+
+    now = datetime.now(timezone.utc)
+    # Clamp so a case can never be ingested already past the recovery window.
+    max_days = max(int(load_policy_config().get("max_recovery_window_days", 7)) - 1, 0)
+    effective_days = min(event.days_overdue, max_days)
+    due = now - timedelta(days=effective_days)
     if not db.get(Invoice, event.invoice_id):
         db.add(Invoice(id=event.invoice_id, customer_id=event.customer_id, amount=event.amount,
-                       currency="INR", due_date=datetime.now(timezone.utc)))
+                       currency="INR", due_date=due))
     case = Case(id=case_id, invoice_id=event.invoice_id, customer_id=event.customer_id,
                 case_type=CaseType.RECEIVABLE, status=CaseStatus.NEW,
-                detected_at=datetime.now(timezone.utc), amount_at_risk=event.amount)
+                detected_at=due, amount_at_risk=event.amount)
     db.add(case)
     db.add(AuditLog(case_id=case_id, event_type="ingest_case", actor="system",
                     payload={"source": "invoice-overdue event"}))

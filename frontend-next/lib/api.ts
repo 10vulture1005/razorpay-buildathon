@@ -79,6 +79,8 @@ export type Timeline = {
 
 export type ChartSeries = { name: string; data: number[] };
 
+export type EmailDraft = { to: string; subject: string; body: string };
+
 export type ChartSpec = {
   type: "bar" | "line" | "pie";
   title: string;
@@ -100,9 +102,20 @@ export type OverdueEventResult = { case_id: string; duplicate: boolean };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
 
+async function errMessage(res: Response, path: string): Promise<string> {
+  let detail = "";
+  try {
+    const body = await res.json();
+    if (body?.detail) detail = typeof body.detail === "string" ? `: ${body.detail}` : "";
+  } catch {
+    // non-JSON error body — fall back to the status line only
+  }
+  return `API ${res.status} on ${path}${detail}`;
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`API ${res.status} on ${path}`);
+  if (!res.ok) throw new Error(await errMessage(res, path));
   return res.json();
 }
 
@@ -113,7 +126,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     cache: "no-store",
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`API ${res.status} on ${path}`);
+  if (!res.ok) throw new Error(await errMessage(res, path));
   return res.json();
 }
 
@@ -129,10 +142,19 @@ export const api = {
   ),
   timeline: (days = 14) => get<Timeline>(`/metrics/timeline?days=${days}`),
   chat: (messages: ChatMessage[], caseId?: string | null) =>
-    post<{ answer: string; chart: ChartSpec | null }>("/chat", {
+    post<{
+      answer: string;
+      chart: ChartSpec | null;
+      email_draft: EmailDraft | null;
+    }>("/chat", {
       messages,
       case_id: caseId ?? null,
     }),
+  sendEmail: (draft: EmailDraft, caseId?: string | null) =>
+    post<{ status: string; to: string; provider: string; provider_message_id: string | null }>(
+      "/chat/send-email",
+      { ...draft, case_id: caseId ?? null },
+    ),
   reportOverdue: (body: {
     invoice_id: string;
     customer_id: string;

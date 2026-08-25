@@ -60,6 +60,12 @@ MAILGUN_BASE_URL = _env("MAILGUN_BASE_URL", "https://api.mailgun.net")
 # Inbound reply route signature verification (Mailgun console -> Receiving).
 MAILGUN_WEBHOOK_SIGNING_KEY = os.environ.get("MAILGUN_WEBHOOK_SIGNING_KEY", "")
 
+# ---- LLM fallback (secondary OpenAI-compatible provider) ----
+# Used when the primary (OpenRouter) exhausts retries — e.g. free-tier 429s.
+# Accepts both NVIDIA_API_KEY and the NVDIA_API_KEY typo.
+NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY") or os.environ.get("NVDIA_API_KEY", "")
+NVIDIA_BASE_URL = _env("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+
 # PAYMENT_PROVIDER: razorpay | console (dev-only echo adapter).
 PAYMENT_PROVIDER = _env("PAYMENT_PROVIDER", "console")
 RAZORPAY_KEY_ID = _env("RAZORPAY_KEY_ID")
