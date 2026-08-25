@@ -246,9 +246,12 @@ class OpenRouterLLM:
             # truncates mid-object (both chat schemas).
             "max_tokens": 2048 if schema.__name__.startswith("ChatReply") else 1024,
             "response_format": {"type": "json_object"},
-            # Ask OpenRouter to include authoritative cost accounting.
-            "usage": {"include": True},
         }
+        # `usage.include` is an OpenRouter-only extension; other
+        # OpenAI-compatible hosts (e.g. NVIDIA) reject it with 400.
+        if "openrouter.ai" in self.base_url:
+            # Ask OpenRouter to include authoritative cost accounting.
+            payload["usage"] = {"include": True}
         resp = None
         for attempt in range(3):
             resp = httpx.post(

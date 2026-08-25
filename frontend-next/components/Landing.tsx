@@ -7,11 +7,9 @@ import {
   useCallback,
   useEffect,
   useRef,
-  useState,
   type CSSProperties,
 } from "react";
-import { api, type Metrics } from "@/lib/api";
-import { inr } from "@/lib/format";
+import HeroSplash from "@/components/HeroSplash";
 
 const solDisplay = Instrument_Serif({
   weight: "400",
@@ -77,133 +75,49 @@ function Reveal({
 }
 
 /* ------------------------------------------------------------------ */
-/* Animated sun — slow-breathing orb over a horizon line               */
+/* Scroll-linked sheet reveal: the white card starts pushed below the  */
+/* viewport and eases up over the fixed gradient hero as you scroll.   */
+/* Pure scroll-position math (rAF), no scroll hijacking.               */
 /* ------------------------------------------------------------------ */
-function SolCanvas() {
-  const ref = useRef<HTMLCanvasElement>(null);
+function useSheetReveal() {
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const el = ref.current;
+    if (!el) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     let raf = 0;
-    let w = 0;
-    let h = 0;
-
-    const resize = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const rect = canvas.getBoundingClientRect();
-      w = rect.width;
-      h = rect.height;
-      canvas.width = Math.round(w * dpr);
-      canvas.height = Math.round(h * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const update = () => {
+      raf = 0;
+      const vh = window.innerHeight;
+      const mobile = window.innerWidth < 640;
+      // reveal completes after this much scrolling…
+      const dist = vh * (mobile ? 0.55 : 0.7);
+      const p = Math.min(1, Math.max(0, window.scrollY / dist));
+      // …with easeOutCubic so the sheet decelerates as it locks in
+      const eased = 1 - Math.pow(1 - p, 3);
+      const maxOffset = vh * (mobile ? 0.22 : 0.38);
+      el.style.transform =
+        p >= 1 ? "" : `translate3d(0, ${(1 - eased) * maxOffset}px, 0)`;
+      const radius = (mobile ? 24 : 32) - eased * (mobile ? 6 : 8);
+      el.style.borderRadius = `${radius}px ${radius}px 0 0`;
     };
-    resize();
-    window.addEventListener("resize", resize);
-
-    const start = performance.now();
-    const draw = (now: number) => {
-      const t = (now - start) / 1000;
-      ctx.clearRect(0, 0, w, h);
-
-      const cx = w / 2;
-      const horizon = h * 0.62;
-      // The orb slowly rises on load, then breathes forever.
-      const rise = Math.min(1, t / 3.5);
-      const eased = 1 - Math.pow(1 - rise, 3);
-      const breathe = 1 + Math.sin(t * 0.7) * 0.02;
-      const cy = horizon - h * 0.16 * eased - Math.sin(t * 0.25) * 4;
-      const R = Math.min(w, h) * 0.17 * breathe;
-
-      // halo
-      const halo = ctx.createRadialGradient(cx, cy, R * 0.4, cx, cy, R * 3.4);
-      halo.addColorStop(0, "rgba(255, 149, 54, 0.34)");
-      halo.addColorStop(0.45, "rgba(255, 149, 54, 0.10)");
-      halo.addColorStop(1, "rgba(255, 149, 54, 0)");
-      ctx.fillStyle = halo;
-      ctx.fillRect(0, 0, w, h);
-
-      // rays
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(t * 0.05);
-      const rays = 36;
-      for (let i = 0; i < rays; i++) {
-        const a = (i / rays) * Math.PI * 2;
-        const flicker = 0.55 + 0.45 * Math.sin(t * 1.3 + i * 1.7);
-        ctx.strokeStyle = `rgba(255, 178, 96, ${0.10 * flicker})`;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(Math.cos(a) * R * 1.28, Math.sin(a) * R * 1.28);
-        ctx.lineTo(Math.cos(a) * R * (2.6 + 0.35 * Math.sin(t + i)), Math.sin(a) * R * (2.6 + 0.35 * Math.sin(t + i)));
-        ctx.stroke();
-      }
-      ctx.restore();
-
-      // core
-      const core = ctx.createRadialGradient(cx - R * 0.25, cy - R * 0.3, R * 0.1, cx, cy, R);
-      core.addColorStop(0, "#ffe9c9");
-      core.addColorStop(0.55, "#ffb260");
-      core.addColorStop(1, "#ff9536");
-      ctx.fillStyle = core;
-      ctx.beginPath();
-      ctx.arc(cx, cy, R, 0, Math.PI * 2);
-      ctx.fill();
-
-      // horizon line cuts the orb — dawn, not noon
-      ctx.fillStyle = "rgba(0, 0, 0, 0.92)";
-      ctx.fillRect(0, horizon, w, h - horizon);
-      ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
-      ctx.fillRect(0, horizon, w, 1);
-
-      // reflection shimmer under the line
-      const refl = ctx.createLinearGradient(0, horizon, 0, horizon + R * 0.9);
-      refl.addColorStop(0, "rgba(255, 149, 54, 0.20)");
-      refl.addColorStop(1, "rgba(255, 149, 54, 0)");
-      ctx.fillStyle = refl;
-      ctx.fillRect(cx - R * 1.4, horizon, R * 2.8, R * 0.9);
-
-      if (!reduced) raf = requestAnimationFrame(draw);
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
     };
-    raf = requestAnimationFrame(draw);
-
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
     return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      if (raf) cancelAnimationFrame(raf);
     };
   }, []);
 
-  return <canvas ref={ref} className="sol-canvas" aria-hidden />;
+  return ref;
 }
-
-/* ------------------------------------------------------------------ */
-/* Live clock + live position strip                                    */
-/* ------------------------------------------------------------------ */
-function useClock() {
-  const [now, setNow] = useState<string>("--:--:--");
-  useEffect(() => {
-    const tick = () =>
-      setNow(
-        new Intl.DateTimeFormat("en-IN", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-          timeZone: "Asia/Kolkata",
-        }).format(new Date()),
-      );
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, []);
-  return now;
-}
-
-/* ------------------------------------------------------------------ */
 
 const PIPELINE = [
   {
@@ -274,21 +188,9 @@ const SPLIT = [
 ];
 
 export default function Landing() {
-  const [metrics, setMetrics] = useState<Metrics | null>(null);
-  const clock = useClock();
+  const sheetRef = useSheetReveal();
   const router = useRouter();
   useReveal();
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .metrics()
-      .then((m) => alive && setMetrics(m))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   const onCta = useCallback(
     (e: React.FormEvent) => {
@@ -300,37 +202,12 @@ export default function Landing() {
 
   return (
     <main className={`sol ${solDisplay.variable} ${solSans.variable}`}>
-      {/* ============================ HERO ============================ */}
-      <section className="sol-hero">
-        <div className="sol-status">
-          <span className="sol-clock">{clock}</span>
-          <span className="sol-sep" aria-hidden />
-          <span>
-            CURRENTLY{" "}
-            <b>
-              {metrics
-                ? `RECOVERING ${inr(metrics.revenue_at_risk)}`
-                : "COUNTING EVERY RUPEE"}
-            </b>{" "}
-            IN{" "}
-            <b>{metrics ? `${metrics.active_cases} OPEN CASES` : "YOUR LEDGER"}</b>
-          </span>
-        </div>
+      {/* ============ FIXED TIME-OF-DAY HERO (z-index: 0) ============ */}
+      <HeroSplash fixed anchor="#manifesto" />
+      <div className="splash-spacer" aria-hidden />
 
-        <div className="sol-hero-center">
-          <SolCanvas />
-          <p className="sol-tagline">The dawn of recovered revenue</p>
-        </div>
-
-        <a href="#manifesto" className="sol-scrollcue" aria-label="Scroll to content">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <path d="M4 9l8 8 8-8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </a>
-      </section>
-
-      {/* ====================== WHITE CARD OVERLAP ==================== */}
-      <div className="sol-card">
+      {/* ============= WHITE SHEET SLIDING OVER HERO (z-index: 10) ==== */}
+      <div className="sol-card" ref={sheetRef}>
         {/* ------------------------ MANIFESTO ------------------------ */}
         <section className="sol-manifesto" id="manifesto">
           <Reveal>

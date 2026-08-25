@@ -947,91 +947,18 @@ button:focus-visible, a:focus-visible, select:focus-visible {
 }
 
 /* ------------------------------ hero ------------------------------ */
-.sol-hero {
-  position: relative;
-  height: 100dvh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  padding: 22px 20px 26px;
-  overflow: hidden;
-}
-.sol-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  font-family: var(--sol-mono);
-  font-size: 11px;
-  letter-spacing: 1.6px;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.72);
-  animation: sol-descend 1.1s cubic-bezier(0.4, 0, 0.2, 1) both;
-}
-.sol-status b { color: var(--sol-accent); font-weight: 600; }
-.sol-clock { font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.85); }
-.sol-sep { width: 1px; height: 12px; background: rgba(255, 255, 255, 0.28); }
-@keyframes sol-descend {
-  from { opacity: 0; transform: translateY(-6px); filter: blur(6px); }
-  to { opacity: 1; transform: translateY(0); filter: blur(0); }
-}
-
-.sol-hero-center {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-}
-.sol-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-.sol-tagline {
-  position: relative;
-  z-index: 1;
-  margin: 0;
-  margin-top: max(34vh, 300px);
-  font-family: var(--sol-display);
-  font-size: clamp(30px, 4.2vw, 52px);
-  letter-spacing: -0.02em;
-  color: #fff;
-  text-align: center;
-  text-shadow: 0 2px 40px rgba(0, 0, 0, 0.55);
-  animation: sol-rise 1.4s 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-@keyframes sol-rise {
-  from { opacity: 0; transform: translateY(18px); filter: blur(10px); }
-  to { opacity: 1; transform: translateY(0); filter: blur(0); }
-}
-
-.sol-scrollcue {
-  color: rgba(255, 255, 255, 0.75);
-  padding: 10px;
-  border-radius: 50%;
-  transition: color 0.2s;
-  animation: sol-bob 2.6s ease-in-out infinite;
-  z-index: 1;
-}
-.sol-scrollcue:hover { color: #fff; }
-@keyframes sol-bob {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(6px); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .sol-tagline, .sol-status { animation: none; opacity: 1; filter: none; transform: none; }
-  .sol-scrollcue { animation: none; }
-}
+/* The hero is now the fixed .splash layer from HeroSplash.tsx; the
+   white sheet below slides over it with a scroll-linked transform
+   driven by useSheetReveal() in Landing.tsx. */
 
 /* -------------------- white card sliding over hero ---------------- */
 .sol-card {
   position: relative;
-  z-index: 2;
+  z-index: 10;
   background: #fff;
   color: var(--sol-ink);
-  border-radius: 30px 30px 0 0;
-  margin-top: -18dvh;
+  border-radius: 32px 32px 0 0;
+  will-change: transform;
   box-shadow:
     0 -58px 105px rgba(0, 0, 0, 0.04),
     0 -30px 60px rgba(0, 0, 0, 0.03);
@@ -1301,7 +1228,236 @@ button:focus-visible, a:focus-visible, select:focus-visible {
 @media (max-width: 900px) {
   .sol-manifesto { grid-template-columns: 1fr; gap: 28px; }
   .sol-split { grid-template-columns: 1fr; }
-  .sol-card { border-radius: 22px 22px 0 0; margin-top: -10dvh; }
-  .sol-tagline { margin-top: max(40vh, 340px); }
+  .sol-card { border-radius: 24px 24px 0 0; }
   .sol-foot-row { justify-content: center; text-align: center; }
+}
+
+/* ==================================================================
+   SPLASH — full-screen hero with live time-of-day theming.
+   Gradient colors are CSS custom properties (--splash-g1..g3) updated
+   every second by HeroSplash.tsx, which interpolates continuously
+   between period anchors so the sky drifts across the day.
+   ================================================================== */
+.splash {
+  --splash-g1: #e07856;
+  --splash-g2: #f2a67a;
+  --splash-g3: #fbd68a;
+  --splash-ink: rgba(255, 255, 255, 0.95);
+  --splash-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  --splash-serif: var(--f-display, "Instrument Serif"), "Playfair Display", Georgia, serif;
+
+  position: relative;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  overflow: hidden;
+  /* static fallback gradient (dawn) shown until JS computes the real one */
+  background: linear-gradient(180deg, #e07856 0%, #f2a67a 52%, #fbd68a 100%);
+  color: var(--splash-ink);
+}
+
+/* fixed layer variant — stays pinned behind the sliding sheet */
+.splash-fixed {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+.splash-spacer {
+  height: 100dvh;
+}
+
+/* live gradient crossfades over the fallback on first tick */
+.splash-bg {
+  position: absolute;
+  inset: 0;
+}
+.splash-bg-live {
+  background: linear-gradient(
+    180deg,
+    var(--splash-g1) 0%,
+    var(--splash-g2) 52%,
+    var(--splash-g3) 100%
+  );
+  opacity: 0;
+  transition: opacity 1.6s ease;
+}
+.splash-bg-live.splash-on { opacity: 1; }
+
+/* ------------------------- grain overlay -------------------------- */
+.splash-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.09;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+}
+
+/* ---------------------------- top bar ----------------------------- */
+.splash-topbar {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 28px 0;
+  font-family: var(--splash-mono);
+  font-size: 11px;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.82);
+  animation: splash-descend 1s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+.splash-clock { font-variant-numeric: tabular-nums; font-weight: 600; color: #fff; }
+.splash-sep { flex: none; width: 1px; height: 12px; background: rgba(255, 255, 255, 0.35); }
+.splash-status b { font-weight: 600; color: #fff; }
+
+/* -------------------------- icon + title -------------------------- */
+.splash-center {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 0 20px;
+}
+/* scroll-linked zoom (fixed hero mode): scale + fade from the middle */
+.splash-fixed .splash-center {
+  transform-origin: center center;
+  will-change: transform, opacity;
+}
+.splash-icons {
+  position: relative;
+  width: 150px;
+  height: 150px;
+  animation: splash-emerge 1.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.splash-icon {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  color: #fff7ea;
+}
+/* sun rays: staggered switch-on, then slow rotation + pulse */
+.splash-rays {
+  transform-origin: 50% 50%;
+  animation: splash-spin 140s linear infinite;
+}
+.splash-ray {
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0;
+  animation:
+    splash-ray-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+    splash-pulse 5s ease-in-out infinite;
+  animation-delay: var(--delay, 250ms), calc(var(--delay, 250ms) + 900ms);
+}
+.splash-core {
+  fill: currentColor;
+  opacity: 0;
+  animation: splash-ray-in 0.9s ease-out forwards,
+    splash-pulse 5s ease-in-out infinite;
+  animation-delay: 150ms, 1050ms;
+}
+@keyframes splash-ray-in {
+  from { opacity: 0; transform: scale(0.4); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes splash-spin { to { transform: rotate(360deg); } }
+@keyframes splash-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* moon crossfades in over the sun at night */
+.splash-moonwrap {
+  position: absolute;
+  inset: 0;
+  transition: opacity 2.5s ease;
+}
+.splash-moon {
+  fill: none;
+  stroke: #fff7ea;
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+.splash-star {
+  fill: #fff7ea;
+  animation: splash-twinkle 3.2s ease-in-out infinite;
+}
+@keyframes splash-twinkle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+.splash-headline {
+  margin: 18px 0 0;
+  font-family: var(--splash-serif);
+  font-weight: 400;
+  font-size: clamp(34px, 5vw, 60px);
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+  text-align: center;
+  text-shadow: 0 2px 44px rgba(0, 0, 0, 0.28);
+}
+.splash-headline span {
+  display: inline-block;
+  animation: splash-headline-in 1.1s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes splash-headline-in {
+  from { opacity: 0; transform: translateY(14px); filter: blur(8px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+
+@keyframes splash-descend {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes splash-emerge {
+  from { opacity: 0; transform: scale(0.82); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* ---------------------------- scroll cue -------------------------- */
+.splash-chevron {
+  position: absolute;
+  bottom: 26px;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 1;
+  padding: 10px;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.8);
+  transition: color 0.2s;
+  animation: splash-bob 2.4s ease-in-out infinite;
+}
+.splash-chevron:hover { color: #fff; }
+@keyframes splash-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(7px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-rays, .splash-chevron { animation: none; }
+  .splash-topbar, .splash-icons, .splash-headline span { animation-duration: 0.01s; }
+  .splash-ray, .splash-star { animation-iteration-count: 1; }
+}
+
+/* ---------------------------- responsive -------------------------- */
+@media (max-width: 640px) {
+  .splash-topbar {
+    justify-content: center;
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 18px 16px 0;
+    text-align: center;
+    letter-spacing: 1.4px;
+  }
 }
