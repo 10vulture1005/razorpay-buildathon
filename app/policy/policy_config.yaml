@@ -1,7 +1,7 @@
 # Policy configuration — versioned, release-able independently of app code.
 # Every policy decision audit row records this version + the full snapshot below,
 # so any past decision is reproducible in a dispute (PRODUCTION.md B1-11).
-version: 2026.08.23-p1
+version: 2026.08.25-c1
 
 max_retries: 3
 max_recovery_window_days: 7
@@ -14,3 +14,9 @@ escalation_min_value: 100000
 contact_hours_start: 8   # inclusive, IST
 contact_hours_end: 19    # exclusive, IST
 enforce_contact_hours: true
+
+# Phase C: inbound-reply extensions. When a debtor replies committing to a
+# payment date, the agent may grant more time instead of escalating —
+# at most max_extensions_per_case times, each clamped to max_extension_days.
+max_extension_days: 14
+max_extensions_per_case: 1

@@ -14,6 +14,12 @@ def reset_case(db, case_id, status="NEW"):
     c = db.get(Case, case_id)
     c.status = CaseStatus.NEW
     c.attempt_count = 0
+    # stale scheduling/throttle state from earlier runs must not leak into a
+    # fresh ladder: promise-hold park, daily message cap, repeat guardrails
+    c.next_allowed_action_at = None
+    c.last_action = None
+    c.messages_sent_today = 0
+    c.messages_sent_date = None
     db.commit()
 
 

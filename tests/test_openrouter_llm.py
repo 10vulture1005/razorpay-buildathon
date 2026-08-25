@@ -14,6 +14,9 @@ from app.models.schemas import DiagnosisResult
 def provider(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
     monkeypatch.setenv("MODEL_FRONTIER", "nvidia/nemotron-3-ultra-550b-a55b")
+    # Hermetic: a developer's .env sets OPENROUTER_MODEL (legacy override) —
+    # it must not leak into this test's expected request shape.
+    monkeypatch.setenv("OPENROUTER_MODEL", "")
     p = OpenRouterLLM()
     # route the module-level client through the OpenRouter provider for this test
     monkeypatch.setattr(llm_mod, "_CLIENT", p)

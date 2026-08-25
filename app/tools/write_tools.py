@@ -10,6 +10,7 @@ Delivery outcomes are never simulated: each tool either returns a real
 provider result or raises ToolExecutionError (retryability preserved from
 the underlying adapter).
 """
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +19,8 @@ from sqlalchemy.orm import Session
 import app.config as config
 from app.db.tables import AuditLog, Case, Customer, EscalationTicket, Invoice, InvoiceStatus, PaymentEvent, PolicyDecisionRecord
 from app.integrations import email as email_svc
+
+logger = logging.getLogger("app.tools.write_tools")
 from app.integrations import payments as payments_svc
 from app.models.schemas import DeliveryResult, EscalationTicket as EscalationResult
 from app.tools.read_tools import NotFoundError
@@ -173,7 +176,7 @@ def send_payment_link(db: Session, case_id: str, channel: str, attempt_number: i
         )
         _register(db, key, case_id, "send_payment_link", attempt_number,
                   result.model_dump(mode="json") | {"short_url": link["short_url"], "email_provider_message_id": sent.get("provider_message_id")})
-        _audit(db, case_id, "send_payment_link", {"channel": channel, "link_id": link["link_id"]} | result.model_dump(mode="json"))
+        _audit(db, case_id, "send_payment_link", {"channel": channel, "link_id": link["link_id"], "short_url": link["short_url"]} | result.model_dump(mode="json"))
         _bump_case(db, case, "send_payment_link")
         return result
 
@@ -224,6 +227,10 @@ def escalate_to_human(db: Session, case_id: str, reason: str, summary: str, atte
                 id=ticket.ticket_id, case_id=case_id, reason=reason[:255], summary=summary, status="open"
             )
         )
+        # The ticket is the load-bearing artifact; the internal notification is
+        # best-effort. An email outage must never block an escalation.
+        _register(db, key, case_id, "escalate_to_human", attempt_number, ticket.model_dump(mode="json"))
+        _audit(db, case_id, "escalate_to_human", ticket.model_dump(mode="json"), reasoning=summary)
         # Escalation notification goes to the internal collections inbox, not the customer.
         escalation_recipient = config.EMAIL_FROM
         if config.EMAIL_PROVIDER != "console":
@@ -234,9 +241,7 @@ def escalate_to_human(db: Session, case_id: str, reason: str, summary: str, atte
                     f"Case {case_id} requires human review.\n\nReason: {reason}\n\n{summary}",
                 )
             except email_svc.EmailDeliveryError as e:
-                raise ToolExecutionError(f"escalation notification failed: {e}", retryable=e.retryable) from e
-        _register(db, key, case_id, "escalate_to_human", attempt_number, ticket.model_dump(mode="json"))
-        _audit(db, case_id, "escalate_to_human", ticket.model_dump(mode="json"), reasoning=summary)
+                logger.warning("escalation.notify_failed | case=%s err=%s", case_id, e)
         return ticket
 
     return _with_retries(do)

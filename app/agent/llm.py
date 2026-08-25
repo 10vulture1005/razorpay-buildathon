@@ -12,6 +12,7 @@ downstream: every response must parse into the schema.
 import contextvars
 import json
 import os
+import re
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -20,7 +21,7 @@ import app.config as config
 
 # Audit reproducibility (B4): every LLM-driven decision records which prompt
 # generation produced it.
-PROMPT_VERSION = "2026-08-23"
+PROMPT_VERSION = "2026-08-25"
 
 _last_usage: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
     "llm_last_usage", default=None)
@@ -37,6 +38,52 @@ def _record_usage(usage: dict):
 
 class StructuredOutputFailure(Exception):
     pass
+
+
+def _parse_json_lenient(content: str) -> dict:
+    """Parse a JSON object out of model output that ignored the JSON-only
+    instruction — markdown fences, leading prose, visible reasoning traces.
+    Candidates are balanced {...} spans (string-aware); the LAST one wins
+    because reasoning models typically think first and answer last."""
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+    unfenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.M)
+    try:
+        return json.loads(unfenced)
+    except json.JSONDecodeError:
+        pass
+    candidates: list[str] = []
+    depth = start = 0
+    in_str = esc = False
+    for i, ch in enumerate(content):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                candidates.append(content[start:i + 1])
+    for cand in reversed(candidates):
+        try:
+            parsed = json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError("no parsable JSON object found")
 
 
 class MockLLM:
@@ -137,9 +184,31 @@ class OpenRouterLLM:
         system = (
             "You are the decision core of a receivables-recovery agent. "
             "Respond with EXACTLY ONE JSON object conforming to this JSON Schema — "
-            "no prose, no markdown fences, no explanation:\n"
+            "no prose, no markdown fences, no explanation, no visible reasoning "
+            "or thinking steps; output the JSON object and nothing else:\n"
             f"{json.dumps(schema.model_json_schema())}"
         )
+        if schema.__name__ == "InterventionChoice":
+            system += (
+                "\n\nStrategy: escalate intervention intensity as attempts accumulate. "
+                "Attempt 0: a polite send_reminder is usually right. If earlier attempts "
+                "were reminders that got no payment, or the customer cites cashflow and "
+                "needs an easy way to pay, choose send_payment_link to reduce friction — "
+                "do not repeat the same outreach twice. Use wait only when payment is "
+                "genuinely not yet due. Reserve escalate_human for exhausted retries, "
+                "disputes, or high-stakes judgment calls."
+            )
+        if schema.__name__ == "ChatReply":
+            system += (
+                "\n\nWhenever your answer reports numeric data (amounts, counts, "
+                "status breakdowns, trends), you MUST attach a chart via the 'chart' "
+                "field — default to including one; omit it only for purely qualitative "
+                "answers. All monetary amounts are INR — always write them with ₹, never $. "
+                "Rules: 'labels' are the category/date names; every series' "
+                "'data' array must have EXACTLY one value per label. Use type=bar for "
+                "comparing categories, type=line for trends over dates, type=pie for "
+                "shares of a whole (one series only)."
+            )
         resp = httpx.post(
             f"{self.base_url}/chat/completions",
             headers={
@@ -154,7 +223,10 @@ class OpenRouterLLM:
                     {"role": "user", "content": json.dumps(prompt)},
                 ],
                 "temperature": 0.2,
-                "max_tokens": 512,
+                # Reasoning models burn tokens on hidden/visible thinking
+                # before emitting the JSON — leave headroom so it never
+                # truncates mid-object (both chat schemas).
+                "max_tokens": 2048 if schema.__name__.startswith("ChatReply") else 1024,
                 "response_format": {"type": "json_object"},
                 # Ask OpenRouter to include authoritative cost accounting.
                 "usage": {"include": True},
@@ -175,10 +247,21 @@ class OpenRouterLLM:
             "cost_est_usd": float(cost),
         })
         content = body["choices"][0]["message"]["content"]
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise StructuredOutputFailure(f"non-JSON model output: {content[:200]}") from e
+        # Leniency boundary: only display-only chat replies may be salvaged
+        # from prose/fenced output. Decision schemas (diagnose/select_action)
+        # require strict JSON — see test_openrouter_llm.py.
+        if schema.__name__ == "ChatReply":
+            try:
+                data = _parse_json_lenient(content)
+            except ValueError as e:
+                raise StructuredOutputFailure(
+                    f"non-JSON model output: {content[:200]}") from e
+        else:
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError as e:
+                raise StructuredOutputFailure(
+                    f"non-JSON model output: {content[:200]}") from e
         try:
             return schema.model_validate(data)
         except ValidationError as e:

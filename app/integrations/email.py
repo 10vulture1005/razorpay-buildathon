@@ -3,6 +3,7 @@
 - smtp:     any standards-compliant SMTP relay (STARTTLS)
 - resend:   Resend HTTP API (https://resend.com/docs/api-reference)
 - sendgrid: SendGrid v3 Mail Send API
+- mailgun:  Mailgun Messages API (https://documentation.mailgun.com)
 - console:  dev/test-only echo adapter — logs the message and returns a
             synthetic provider id. REFUSED in production (see config guard).
 
@@ -39,6 +40,10 @@ def _require_provider_config():
         raise EmailDeliveryError("EMAIL_PROVIDER=resend requires RESEND_API_KEY", retryable=False)
     if p == "sendgrid" and not config.SENDGRID_API_KEY:
         raise EmailDeliveryError("EMAIL_PROVIDER=sendgrid requires SENDGRID_API_KEY", retryable=False)
+    if p == "mailgun" and not (config.MAILGUN_API_KEY and config.MAILGUN_DOMAIN):
+        raise EmailDeliveryError(
+            "EMAIL_PROVIDER=mailgun requires MAILGUN_API_KEY and MAILGUN_DOMAIN", retryable=False
+        )
 
 
 def _send_smtp(to_addr: str, subject: str, body: str) -> dict:
@@ -97,6 +102,29 @@ def _send_sendgrid(to_addr: str, subject: str, body: str) -> dict:
     return {"provider": "sendgrid", "provider_message_id": None}  # SendGrid returns 202 with no body id
 
 
+def _send_mailgun(to_addr: str, subject: str, body: str) -> dict:
+    """Mailgun Messages API: multipart form, basic auth with 'api' as user.
+    From address must be on the verified MAILGUN_DOMAIN."""
+    resp = httpx.post(
+        f"{config.MAILGUN_BASE_URL.rstrip('/')}/v3/{config.MAILGUN_DOMAIN}/messages",
+        auth=("api", config.MAILGUN_API_KEY),
+        data={
+            "from": config.EMAIL_FROM,
+            "to": [to_addr],
+            "subject": subject,
+            "text": body,
+        },
+        timeout=HTTP_TIMEOUT_S,
+    )
+    if resp.status_code >= 500 or resp.status_code == 429:
+        raise EmailDeliveryError(f"mailgun transient failure {resp.status_code}")
+    if resp.status_code != 200:
+        raise EmailDeliveryError(
+            f"mailgun rejected send {resp.status_code}: {resp.text[:200]}", retryable=False
+        )
+    return {"provider": "mailgun", "provider_message_id": resp.json().get("id")}
+
+
 def _send_console(to_addr: str, subject: str, body: str) -> dict:
     """Dev/test echo adapter. Requires ALLOW_MOCK_ADAPTERS=true; never
     reachable in production (startup guard + this check)."""
@@ -116,6 +144,7 @@ _SENDERS = {
     "smtp": _send_smtp,
     "resend": _send_resend,
     "sendgrid": _send_sendgrid,
+    "mailgun": _send_mailgun,
     "console": _send_console,
 }
 

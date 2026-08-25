@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 import app.config as config
 from app.agent import llm as llm_mod
-from app.db.tables import AuditLog, Case, CaseStatus
+from app.db.tables import AuditLog, Case, CaseStatus, Promise
 from app.models.domain import CaseState, PolicyDecision, StoppingRulesDecision
 from app.models.schemas import DiagnosisResult, InterventionChoice
 from app.policy.policy_engine import ACTION_COSTS, PolicyEngine
@@ -141,6 +141,29 @@ def select_action(db: Session, state: CaseState) -> CaseState:
                {"attempt_count": state.attempt_count})
         return state
 
+    # Promise-hold gate (Phase C): the customer gave a payment commitment and
+    # we granted more time — hold all outreach until it lapses, without
+    # burning an LLM call or an attempt. Reads the PROMISES ledger (not the
+    # next_allowed_action_at cooldown, which _bump_case sets on every send).
+    case_row = db.get(Case, state.case_id)
+    if case_row is not None:
+        pending = (
+            db.query(Promise)
+            .filter(Promise.case_id == state.case_id, Promise.kept.is_(None))
+            .order_by(Promise.promised_date.desc())
+            .first()
+        )
+        if pending is not None:
+            pdt = pending.promised_date
+            pdt_utc = pdt if pdt.tzinfo else pdt.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) < pdt_utc:
+                state.proposed_action = None
+                state.terminal_reason = None
+                set_status(db, state.case_id, CaseStatus.AWAITING_OUTCOME)
+                _audit(db, state.case_id, "parked_promise", "system",
+                       {"resume_after": pdt_utc.isoformat()})
+                return state
+
     prompt = {
         "context": state.context,
         "attempt_number": state.attempt_count,
@@ -153,6 +176,24 @@ def select_action(db: Session, state: CaseState) -> CaseState:
         set_status(db, state.case_id, CaseStatus.ESCALATED)
         _audit(db, state.case_id, "select_action_failed", "agent", {})
         return state
+
+    # Deterministic intervention-ladder guardrail (LLM proposes, code decides):
+    # never repeat the same customer-facing outreach twice in a row. A reminder
+    # that produced no payment means the ask must get easier, not identical.
+    last_action = db.get(Case, state.case_id).last_action
+    if (
+        choice.action == "send_reminder"
+        and last_action == "send_reminder"
+        and state.attempt_count >= 1
+    ):
+        choice = InterventionChoice(
+            action="send_payment_link",
+            expected_recovery_probability=choice.expected_recovery_probability,
+            reasoning="guardrail: reminder already sent with no payment; escalating to payment link",
+        )
+        _audit(db, state.case_id, "action_guardrail", "system",
+               {"from": "send_reminder", "to": "send_payment_link",
+                "reason": "repeat_outreach_blocked"})
 
     payload = choice.model_dump()
     payload["prompt_version"] = llm_mod.PROMPT_VERSION

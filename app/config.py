@@ -43,8 +43,8 @@ MODEL_FRONTIER = os.environ.get("MODEL_FRONTIER", "anthropic/claude-sonnet-4.5")
 MODEL_SMALL = os.environ.get("MODEL_SMALL", "google/gemini-2.5-flash")
 
 # ---- Real outbound integrations ----
-# EMAIL_PROVIDER: smtp | resend | sendgrid | console (dev-only echo adapter;
-# production startup refuses to boot with console providers configured).
+# EMAIL_PROVIDER: smtp | resend | sendgrid | mailgun | console (dev-only echo
+# adapter; production startup refuses to boot with console providers configured).
 EMAIL_PROVIDER = _env("EMAIL_PROVIDER", "console")
 EMAIL_FROM = _env("EMAIL_FROM", "recovery@localhost")
 SMTP_HOST = _env("SMTP_HOST")
@@ -53,6 +53,12 @@ SMTP_USER = _env("SMTP_USER")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
+MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
+MAILGUN_DOMAIN = _env("MAILGUN_DOMAIN")
+# Mailgun has separate EU/US API hosts; the domain's region decides which one.
+MAILGUN_BASE_URL = _env("MAILGUN_BASE_URL", "https://api.mailgun.net")
+# Inbound reply route signature verification (Mailgun console -> Receiving).
+MAILGUN_WEBHOOK_SIGNING_KEY = os.environ.get("MAILGUN_WEBHOOK_SIGNING_KEY", "")
 
 # PAYMENT_PROVIDER: razorpay | console (dev-only echo adapter).
 PAYMENT_PROVIDER = _env("PAYMENT_PROVIDER", "console")

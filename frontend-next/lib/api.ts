@@ -43,6 +43,28 @@ export type AuditEvent = {
   agent_reasoning: string | null;
 };
 
+export type Ticket = {
+  ticket_id: string;
+  case_id: string;
+  reason: string;
+  summary: string;
+  ticket_status: string;
+  created_at: string | null;
+  amount_at_risk: number;
+  days_overdue: number;
+  actions_tried: string[];
+  diagnosis: Record<string, unknown> | null;
+  company: {
+    name: string;
+    email: string | null;
+    opted_out: boolean;
+    on_time_rate: number | null;
+    avg_days_late: number | null;
+    broken_promise_count: number | null;
+    invoices_total: number | null;
+  };
+};
+
 export type TimelineDay = {
   date: string;
   actions: number;
@@ -55,7 +77,17 @@ export type Timeline = {
   payment_events_total: number;
 };
 
-export type ChatMessage = { role: "user" | "assistant"; content: string };
+export type ChartSeries = { name: string; data: number[] };
+
+export type ChartSpec = {
+  type: "bar" | "line" | "pie";
+  title: string;
+  unit: string | null;
+  labels: string[];
+  series: ChartSeries[];
+};
+
+export type ChatMessage = { role: "user" | "assistant"; content: string; chart?: ChartSpec | null };
 
 export type RunResult = {
   case_id: string;
@@ -91,14 +123,22 @@ export const api = {
   cases: () => get<CaseSummary[]>("/cases"),
   activity: (limit = 60) => get<{ events: AuditEvent[] }>(`/metrics/activity?limit=${limit}`),
   audit: (caseId: string) => get<{ events: AuditEvent[] }>(`/cases/${caseId}/audit`),
+  tickets: (status = "open") => get<Ticket[]>(`/tickets?status=${encodeURIComponent(status)}`),
+  resolveTicket: (ticketId: string) => post<{ ticket_id: string; status: string }>(
+    `/tickets/${ticketId}/resolve`, {},
+  ),
   timeline: (days = 14) => get<Timeline>(`/metrics/timeline?days=${days}`),
   chat: (messages: ChatMessage[], caseId?: string | null) =>
-    post<{ answer: string }>("/chat", { messages, case_id: caseId ?? null }),
+    post<{ answer: string; chart: ChartSpec | null }>("/chat", {
+      messages,
+      case_id: caseId ?? null,
+    }),
   reportOverdue: (body: {
     invoice_id: string;
     customer_id: string;
     amount: number;
     customer_email?: string | null;
+    customer_name?: string | null;
   }) => post<OverdueEventResult>("/events/invoice-overdue", body),
   runAgent: (caseId: string) => post<RunResult>(`/agent/run/${caseId}`, {}),
   simulatePayment: (caseId: string) =>

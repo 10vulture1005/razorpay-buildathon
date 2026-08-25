@@ -3,6 +3,8 @@ One place to look for every schema, per the phase spec."""
 from datetime import datetime
 from typing import Literal
 
+import datetime as dt
+
 from pydantic import BaseModel, Field
 
 LikelyCause = Literal["cashflow_issue", "dispute", "forgot", "process_delay", "unwilling",
@@ -63,6 +65,19 @@ class Message(BaseModel):
     channel: str
     body: str
     created_at: datetime
+
+
+# ---- Inbound reply classification (Phase C) ----
+
+
+class ReplyIntent(BaseModel):
+    """Structured read of a debtor's reply email. The LLM classifies; the
+    deterministic gate in the route decides what we do about it."""
+
+    intent: Literal["dispute", "payment_commitment", "stalling", "other"]
+    promised_date: dt.date | None = None
+    confidence: float = Field(ge=0, le=1)
+    reasoning: str
 
 
 # ---- Write tool outputs ----
