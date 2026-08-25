@@ -218,6 +218,17 @@ class OpenRouterLLM:
                 "comparing categories, type=line for trends over dates, type=pie for "
                 "shares of a whole (one series only)."
             )
+        if schema.__name__ == "ChatReply":
+            system += (
+                "\n\nEMAIL DRAFTING: when the operator asks you to send an email "
+                "(e.g. 'send this mail to a@b.com as — reason — tell him —'), fill "
+                "the 'email_draft' field with {to, subject, body} and keep 'answer' "
+                "to one short line asking them to review, edit and confirm before it "
+                "is sent. Use the case context (amounts, history, audit trail) to "
+                "write a specific, professional body in INR (₹). You are only the "
+                "drafter: NEVER claim an email was sent or will be sent — the human "
+                "sends it themselves after reviewing your draft."
+            )
         # 429 handling: free tiers enforce per-minute AND daily caps. A burst
         # limit clears in seconds, so wait-and-retry here instead of failing
         # the whole agent run. Daily caps (retry-after absent / huge) fail fast.

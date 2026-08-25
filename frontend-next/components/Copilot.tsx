@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ChatChart from "@/components/ChatChart";
-import { api, type CaseSummary, type ChatMessage } from "@/lib/api";
+import { api, type CaseSummary, type ChatMessage, type EmailDraft } from "@/lib/api";
 
 const SUGGESTIONS = [
   "How much money is at risk right now?",
@@ -11,12 +11,86 @@ const SUGGESTIONS = [
   "What happened on my biggest open case?",
 ];
 
+type DraftStatus = "pending" | "sending" | "sent" | "discarded" | "failed";
+type DraftCard = EmailDraft & { status: DraftStatus; error?: string };
+type Msg = ChatMessage & { draft?: DraftCard };
+
+function EmailDraftCard({
+  msg,
+  index,
+  onChange,
+  onConfirm,
+  onDiscard,
+}: {
+  msg: Msg;
+  index: number;
+  onChange: (index: number, patch: Partial<DraftCard>) => void;
+  onConfirm: (index: number) => void;
+  onDiscard: (index: number) => void;
+}) {
+  const d = msg.draft!;
+  if (d.status === "discarded") {
+    return <div className="email-card discarded">Draft discarded.</div>;
+  }
+  if (d.status === "sent") {
+    return <div className="email-card sent">Email sent to {d.to} ✓</div>;
+  }
+  const locked = d.status === "sending";
+  const ready = d.to.includes("@") && d.subject.trim() && d.body.trim() && !locked;
+  return (
+    <div className="email-card">
+      <div className="email-card-title">Draft email — review and edit before sending</div>
+      <label className="email-field">
+        To
+        <input
+          value={d.to}
+          onChange={(e) => onChange(index, { to: e.target.value })}
+          disabled={locked}
+          aria-label="Recipient email"
+        />
+      </label>
+      <label className="email-field">
+        Subject
+        <input
+          value={d.subject}
+          onChange={(e) => onChange(index, { subject: e.target.value })}
+          disabled={locked}
+          aria-label="Email subject"
+        />
+      </label>
+      <label className="email-field">
+        Body
+        <textarea
+          value={d.body}
+          onChange={(e) => onChange(index, { body: e.target.value })}
+          disabled={locked}
+          rows={8}
+          aria-label="Email body"
+        />
+      </label>
+      {d.status === "failed" && (
+        <p className="email-error" role="alert">
+          Send failed ({d.error}) — edit and try again.
+        </p>
+      )}
+      <div className="email-actions">
+        <button className="btn primary" disabled={!ready} onClick={() => onConfirm(index)}>
+          {locked ? "Sending…" : "Confirm & send"}
+        </button>
+        <button className="btn" disabled={locked} onClick={() => onDiscard(index)}>
+          Discard
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Copilot() {
-  const [messages, setMessages] = useState<ChatMessage[]>([
+  const [messages, setMessages] = useState<Msg[]>([
     {
       role: "assistant",
       content:
-        "Recovery copilot online. I read the live ledger — money at risk, every case, every policy decision, full audit trails. Ask me anything about it. I can explain, but I cannot execute actions; only the policy-gated agent can.",
+        "Recovery copilot online. I read the live ledger — money at risk, every case, every policy decision, full audit trails. Ask me anything about it. I can explain what happened, and if you ask me to email someone I'll draft it for you here — you edit it and confirm before anything is sent; only the policy-gated agent executes actions on its own.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -40,19 +114,58 @@ export default function Copilot() {
   async function send(text: string) {
     const content = text.trim();
     if (!content || busy) return;
-    const next = [...messages, { role: "user" as const, content }];
+    const next: Msg[] = [...messages, { role: "user" as const, content }];
     setMessages(next);
     setInput("");
     setBusy(true);
     setError(null);
     try {
-      const res = await api.chat(next.filter((m, i) => !(i === 0 && m.role === "assistant")), focus);
-      setMessages((m) => [...m, { role: "assistant", content: res.answer, chart: res.chart ?? null }]);
+      const res = await api.chat(
+        next
+          .filter((m, i) => !(i === 0 && m.role === "assistant"))
+          .map(({ role, content }) => ({ role, content })),
+        focus,
+      );
+      const reply: Msg = { role: "assistant", content: res.answer, chart: res.chart ?? null };
+      if (res.email_draft) {
+        reply.draft = { ...res.email_draft, status: "pending" };
+      }
+      setMessages((m) => [...m, reply]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "copilot unreachable");
     } finally {
       setBusy(false);
     }
+  }
+
+  function patchDraft(index: number, patch: Partial<DraftCard>) {
+    setMessages((m) =>
+      m.map((msg, i) =>
+        i === index && msg.draft ? { ...msg, draft: { ...msg.draft, ...patch } } : msg,
+      ),
+    );
+  }
+
+  async function confirmSend(index: number) {
+    const msg = messages[index];
+    if (!msg?.draft) return;
+    patchDraft(index, { status: "sending", error: undefined });
+    try {
+      await api.sendEmail(
+        { to: msg.draft.to.trim(), subject: msg.draft.subject.trim(), body: msg.draft.body },
+        focus,
+      );
+      patchDraft(index, { status: "sent", error: undefined });
+    } catch (e) {
+      patchDraft(index, {
+        status: "failed",
+        error: e instanceof Error ? e.message : "delivery error",
+      });
+    }
+  }
+
+  function discardDraft(index: number) {
+    patchDraft(index, { status: "discarded" });
   }
 
   return (
@@ -80,11 +193,20 @@ export default function Copilot() {
       <div className="chat-scroll" ref={listRef} aria-live="polite">
         {messages.map((m, i) => (
           <div key={i} className={"bubble-row " + m.role}>
-            <div className={"bubble " + m.role}>
+            <div className={"bubble " + m.role + (m.draft ? " has-draft" : "")}>
               {m.content.split("\n").map((line, j) => (
                 <p key={j}>{line}</p>
               ))}
               {m.role === "assistant" && m.chart && <ChatChart spec={m.chart} />}
+              {m.role === "assistant" && m.draft && (
+                <EmailDraftCard
+                  msg={m}
+                  index={i}
+                  onChange={patchDraft}
+                  onConfirm={confirmSend}
+                  onDiscard={discardDraft}
+                />
+              )}
             </div>
           </div>
         ))}

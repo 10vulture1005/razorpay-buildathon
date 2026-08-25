@@ -161,6 +161,7 @@ export const api = {
     amount: number;
     customer_email?: string | null;
     customer_name?: string | null;
+    days_overdue?: number;
   }) => post<OverdueEventResult>("/events/invoice-overdue", body),
   runAgent: (caseId: string) => post<RunResult>(`/agent/run/${caseId}`, {}),
   simulatePayment: (caseId: string) =>

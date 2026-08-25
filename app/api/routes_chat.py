@@ -5,14 +5,20 @@ recovery outcomes. Its context is assembled fresh from the DB on every request
 (metrics + funnel + open cases + recent audit events, plus the full trail of a
 focused case) — it never answers from memory of a previous session.
 
-Safety property unchanged: chat output is display-only. It never feeds the
-policy engine or any write tool; the copilot cannot execute actions.
+Safety property: chat output is display-only. It never feeds the policy
+engine or any write tool; the copilot cannot execute actions on its own.
+
+The one deliberate exception, still human-gated end to end: when the operator
+asks the copilot to email someone, the model may attach an EMAIL DRAFT to its
+reply (email_draft). The draft is rendered as an editable card in the UI and
+is only transmitted by POST /chat/send-email — an explicit, confirmed call by
+the human, audited with actor="human". The copilot itself never sends mail.
 """
 from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy import func as safunc
 from sqlalchemy.orm import Session
 
@@ -105,9 +111,42 @@ def _coerce_chart(raw) -> ChartSpec | None:
         return None
 
 
+class EmailDraft(BaseModel):
+    """An email the copilot DRAFTED for the operator. Display-only until the
+    operator explicitly confirms via POST /chat/send-email."""
+    to: str = Field(max_length=254)
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=8000)
+
+    @model_validator(mode="after")
+    def _sane_recipient(self):
+        # Match the delivery adapter's own minimal validation — full RFC-5322
+        # parsing is the provider's job, this just catches model garbage.
+        if "@" not in self.to or " " in self.to.strip():
+            raise ValueError(f"'to' is not a plausible address: {self.to!r}")
+        return self
+
+
+def _coerce_email_draft(raw) -> EmailDraft | None:
+    """Lenient repair of a model-emitted draft. A draft that fails strict
+    validation degrades to None (with the prose answer intact) instead of
+    discarding the whole reply."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return EmailDraft(
+            to=str(raw.get("to") or "").strip()[:254],
+            subject=str(raw.get("subject") or "").strip()[:200],
+            body=str(raw.get("body") or "").strip()[:8000],
+        )
+    except ValidationError:
+        return None
+
+
 class ChatReply(BaseModel):
     answer: str  # display-only output; never branched on downstream
     chart: ChartSpec | None = None  # optional visual companion, display-only
+    email_draft: EmailDraft | None = None  # human-gated: sent only on explicit confirm
 
     @model_validator(mode="before")
     @classmethod
@@ -119,8 +158,15 @@ class ChatReply(BaseModel):
             if "answer" not in data and {"type", "labels"} <= set(data):
                 title = str(data.get("title") or "the requested breakdown")
                 data = {"answer": f"Chart: {title}.", "chart": data}
+            # Same for a bare email draft emitted without the answer wrapper.
+            if "answer" not in data and {"to", "subject", "body"} <= set(data):
+                data = {"answer": "Here is the draft — review, edit and confirm.",
+                        "email_draft": data}
             if data.get("chart") is not None:
                 data["chart"] = _coerce_chart(data["chart"])
+            # Same lenient path for the email draft: repair or drop it.
+            if data.get("email_draft") is not None:
+                data["email_draft"] = _coerce_email_draft(data["email_draft"])
         return data
 
 
@@ -238,4 +284,45 @@ def chat(req: ChatRequest, db: Session = Depends(get_session)):
             reply = ChatReply(answer=plain.answer, chart=None)
     return {"answer": reply.answer,
             "chart": reply.chart.model_dump() if reply.chart else None,
+            "email_draft": reply.email_draft.model_dump() if reply.email_draft else None,
             "context_generated_at": context["generated_at"]}
+
+
+class SendEmailRequest(BaseModel):
+    """The operator-confirmed email. The copilot only ever PROPOSES a draft;
+    this endpoint is the single place mail leaves the chat, on an explicit
+    human confirmation of (possibly edited) content."""
+    to: str = Field(max_length=254)
+    subject: str = Field(min_length=1, max_length=200)
+    body: str = Field(min_length=1, max_length=8000)
+    case_id: str | None = Field(default=None, max_length=64)
+
+
+@router.post("/chat/send-email", dependencies=[Depends(require_scope("run"))])
+def send_copilot_email(req: SendEmailRequest, db: Session = Depends(get_session)):
+    from app.integrations.email import EmailDeliveryError, send_email
+
+    draft = _coerce_email_draft(req.model_dump())
+    if draft is None:
+        raise HTTPException(422, "invalid recipient address")
+
+    if req.case_id and not db.get(Case, req.case_id):
+        raise HTTPException(404, f"case {req.case_id} not found")
+
+    try:
+        result = send_email(draft.to, draft.subject, draft.body)
+    except EmailDeliveryError as e:
+        # Adapter failures are delivery problems, not client bugs: surface
+        # them so the UI can let the operator edit/retry.
+        status = 503 if e.retryable else 400
+        raise HTTPException(status, f"email delivery failed: {e}") from e
+
+    db.add(AuditLog(case_id=req.case_id, event_type="copilot_email_sent",
+                    actor="human",
+                    payload={"to": draft.to, "subject": draft.subject,
+                             "provider": result["provider"],
+                             "provider_message_id": result.get("provider_message_id")}))
+    db.commit()
+    return {"status": "sent", "to": draft.to,
+            "provider": result["provider"],
+            "provider_message_id": result.get("provider_message_id")}
