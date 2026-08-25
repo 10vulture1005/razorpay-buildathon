@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func as safunc
 from sqlalchemy.orm import Session
 
@@ -35,8 +35,100 @@ class ChatRequest(BaseModel):
     case_id: str | None = Field(default=None, max_length=64)
 
 
+class ChartSeries(BaseModel):
+    name: str = Field(max_length=48)
+    data: list[float] = Field(max_length=31)
+
+
+class ChartSpec(BaseModel):
+    """Display-only chart payload the copilot may attach to an answer."""
+    type: Literal["bar", "line", "pie"]
+    title: str = Field(max_length=120)
+    unit: str | None = Field(default=None, max_length=12)
+    labels: list[str] = Field(min_length=2, max_length=31)
+    series: list[ChartSeries] = Field(min_length=1, max_length=4)
+
+    @model_validator(mode="after")
+    def _series_match_labels(self):
+        for s in self.series:
+            if len(s.data) != len(self.labels):
+                raise ValueError(
+                    f"series '{s.name}' has {len(s.data)} points but there are "
+                    f"{len(self.labels)} labels")
+        if self.type == "pie" and len(self.series) > 1:
+            raise ValueError("pie charts support exactly one series")
+        return self
+
+
+def _coerce_chart(raw) -> ChartSpec | None:
+    """Lenient repair of model-emitted chart payloads. Charts are display-only,
+    so minor defects (length mismatch, non-numeric points, extra pie series)
+    are coerced instead of discarding the whole reply to the text-only path."""
+    if not isinstance(raw, dict):
+        return None
+    ctype = raw.get("type")
+    if ctype not in ("bar", "line", "pie"):
+        return None
+    unit_raw = raw.get("unit")
+    unit = str(unit_raw)[:12] if isinstance(unit_raw, str) and unit_raw.strip() else None
+    labels_raw = raw.get("labels")
+    if not isinstance(labels_raw, list):
+        return None
+    labels = [str(x) for x in labels_raw if x is not None][:31]
+    if len(labels) < 2:
+        return None
+    n = len(labels)
+    series_out: list[dict] = []
+    for s in (raw.get("series") or [])[:4]:
+        if not isinstance(s, dict):
+            continue
+        vals = s.get("data")
+        if not isinstance(vals, list):
+            continue
+        nums: list[float] = []
+        for v in vals[:n]:
+            try:
+                nums.append(float(v))
+            except (TypeError, ValueError):
+                nums.append(0.0)
+        while len(nums) < n:  # pad short arrays; truncate long ones
+            nums.append(0.0)
+        series_out.append({"name": str(s.get("name") or "series")[:48], "data": nums})
+    if not series_out:
+        return None
+    if ctype == "pie":
+        series_out = series_out[:1]
+    try:
+        return ChartSpec(type=ctype, title=str(raw.get("title") or "Chart")[:120],
+                         unit=unit, labels=labels, series=series_out)
+    except ValidationError:
+        return None
+
+
 class ChatReply(BaseModel):
     answer: str  # display-only output; never branched on downstream
+    chart: ChartSpec | None = None  # optional visual companion, display-only
+
+    @model_validator(mode="before")
+    @classmethod
+    def _repair_chart(cls, data):
+        """Coerce the chart BEFORE strict validation so a malformed chart
+        degrades to chart=None instead of failing the entire reply."""
+        if isinstance(data, dict):
+            # Some models emit the bare chart object instead of the wrapper.
+            if "answer" not in data and {"type", "labels"} <= set(data):
+                title = str(data.get("title") or "the requested breakdown")
+                data = {"answer": f"Chart: {title}.", "chart": data}
+            if data.get("chart") is not None:
+                data["chart"] = _coerce_chart(data["chart"])
+        return data
+
+
+class ChatReplyTextOnly(BaseModel):
+    """Degraded fallback schema — no chart field, so the llm.py chart prompt
+    hints never apply and the model only has to produce plain prose."""
+
+    answer: str = Field(max_length=4000)
 
 
 def _briefing(db: Session, case_id: str | None) -> dict:
@@ -104,6 +196,15 @@ def _mock_reply(prompt: dict) -> ChatReply:
         f"Active {m.get('active_cases', 0)} · escalated {m.get('escalated_cases', 0)} · "
         f"stopped {m.get('stopped_cases', 0)}.",
     ]
+    chart = ChartSpec(
+        type="bar",
+        title="Case pipeline by status",
+        unit="cases",
+        labels=["active", "escalated", "stopped", "recovered"],
+        series=[{"name": "cases",
+                 "data": [m.get("active_cases", 0), m.get("escalated_cases", 0),
+                          m.get("stopped_cases", 0), m.get("recovered_cases", 0)]}],
+    )
     rej = ctx.get("recent_policy_rejections") or []
     if rej:
         lines.append("Recent policy blocks: " +
@@ -113,7 +214,7 @@ def _mock_reply(prompt: dict) -> ChatReply:
         lines.append(f"Focused case {focus['case_id']} ({focus['status']}): "
                      f"₹{focus['amount_at_risk']:,.0f}, {focus['attempt_count']} attempts.")
     lines.append("(LLM_PROVIDER=mock heuristic briefing — configure OpenRouter for full answers.)")
-    return ChatReply(answer="\n".join(lines))
+    return ChatReply(answer="\n".join(lines), chart=chart)
 
 
 @router.post("/chat", dependencies=[Depends(require_scope("read"))])
@@ -124,7 +225,17 @@ def chat(req: ChatRequest, db: Session = Depends(get_session)):
     try:
         reply = llm_mod.call_structured(ChatReply, prompt)
     except llm_mod.StructuredOutputFailure:
-        if llm_mod._CLIENT.__class__.__name__ != "MockLLM":
-            raise
-        reply = _mock_reply(prompt)
-    return {"answer": reply.answer, "context_generated_at": context["generated_at"]}
+        if llm_mod._CLIENT.__class__.__name__ == "MockLLM":
+            reply = _mock_reply(prompt)
+        else:
+            # Degrade gracefully rather than 500: retry as plain text (no
+            # chart). The chat is display-only, so a chart-less answer is a
+            # strictly better failure mode than an error banner.
+            try:
+                plain = llm_mod.call_structured(ChatReplyTextOnly, prompt)
+            except llm_mod.StructuredOutputFailure:
+                raise
+            reply = ChatReply(answer=plain.answer, chart=None)
+    return {"answer": reply.answer,
+            "chart": reply.chart.model_dump() if reply.chart else None,
+            "context_generated_at": context["generated_at"]}

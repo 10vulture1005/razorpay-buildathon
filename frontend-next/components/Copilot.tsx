@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ChatChart from "@/components/ChatChart";
 import { api, type CaseSummary, type ChatMessage } from "@/lib/api";
 
 const SUGGESTIONS = [
@@ -46,7 +47,7 @@ export default function Copilot() {
     setError(null);
     try {
       const res = await api.chat(next.filter((m, i) => !(i === 0 && m.role === "assistant")), focus);
-      setMessages((m) => [...m, { role: "assistant", content: res.answer }]);
+      setMessages((m) => [...m, { role: "assistant", content: res.answer, chart: res.chart ?? null }]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "copilot unreachable");
     } finally {
@@ -83,6 +84,7 @@ export default function Copilot() {
               {m.content.split("\n").map((line, j) => (
                 <p key={j}>{line}</p>
               ))}
+              {m.role === "assistant" && m.chart && <ChatChart spec={m.chart} />}
             </div>
           </div>
         ))}
