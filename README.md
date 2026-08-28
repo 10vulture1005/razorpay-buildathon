@@ -19,38 +19,38 @@ gap analysis and phased rollout plan.
 ```mermaid
 flowchart LR
     subgraph Clients
-        FE[Next.js dashboard :3000]
-        CURL[API clients]
+        FE["Next.js dashboard :3000"]
+        CURL["API clients"]
     end
 
-    subgraph Backend["FastAPI :8000"]
-        API[REST API<br/>events · cases · metrics · audit]
-        GRAPH[Agent graph<br/>bounded state-machine loop]
+    subgraph Backend ["FastAPI :8000"]
+        API["REST API\nevents · cases · metrics · audit"]
+        GRAPH["Agent graph\nbounded state-machine loop"]
     end
 
-    subgraph Deterministic["Deterministic core — zero LLM"]
-        PE[PolicyEngine<br/>YAML-configured rules]
-        SR[Stopping rules]
+    subgraph Deterministic ["Deterministic core — zero LLM"]
+        PE["PolicyEngine\nYAML-configured rules"]
+        SR["Stopping rules"]
     end
 
-    subgraph Intelligence["LLM layer — structured output only"]
-        DX[diagnose<br/>DiagnosisResult]
-        SA[select_action<br/>InterventionChoice]
+    subgraph Intelligence ["LLM layer — structured output only"]
+        DX["diagnose\nDiagnosisResult"]
+        SA["select_action\nInterventionChoice"]
     end
 
-    subgraph Data[("PostgreSQL")]
-        CASES[cases · customers · invoices<br/>promises · subscriptions]
-        AUDIT[(audit_log)]
-        IDEM[(tool_executions<br/>idempotency ledger)]
-        PAY[payment_events ·<br/>retry_events]
+    subgraph Data ["PostgreSQL"]
+        CASES["cases · customers · invoices\npromises · subscriptions"]
+        AUDIT[("audit_log")]
+        IDEM[("tool_executions\nidempotency ledger")]
+        PAY["payment_events ·\nretry_events"]
     end
 
-    subgraph Tools["Tools layer — the only data seam"]
-        RT[read_tools]
-        WT[write_tools<br/>idempotent · audited]
+    subgraph Tools ["Tools layer — the only data seam"]
+        RT["read_tools"]
+        WT["write_tools\nidempotent · audited"]
     end
 
-    POLLER[outcome poller<br/>interval + sync modes]
+    POLLER["outcome poller\ninterval + sync modes"]
 
     FE -->|"/api proxy"| API --> GRAPH
     GRAPH --> DX & SA
@@ -71,19 +71,19 @@ structured enum fields (`likely_cause`, `action`, `allowed`) — guarded by test
 
 ```mermaid
 flowchart TD
-    INGEST[ingest_case] --> CTX[build_context<br/>only decision-relevant fields:<br/>amount · days overdue · last 3 messages<br/>payment pattern · promise count]
-    CTX --> DIAG{diagnose<br/>LLM structured output}
+    INGEST["ingest_case"] --> CTX["build_context\nonly decision-relevant fields:\namount · days overdue · last 3 messages\npayment pattern · promise count"]
+    CTX --> DIAG{"diagnose\nLLM structured output"}
     DIAG -->|validation fails twice| ESC
-    DIAG --> SELECT{select_action<br/>LLM structured output<br/>+ net expected value computed in code}
-    SELECT -->|"attempt_count ≥ max_retries"| ESC[ESCALATED<br/>terminal]
-    SELECT --> POLICY{policy_check<br/>deterministic}
-    POLICY -->|allowed| EXEC[execute_action<br/>idempotent write tool<br/>attempt++ transactionally]
+    DIAG --> SELECT{"select_action\nLLM structured output\n+ net expected value computed in code"}
+    SELECT -->|"attempt_count ≥ max_retries"| ESC["ESCALATED\nterminal"]
+    SELECT --> POLICY{"policy_check\ndeterministic"}
+    POLICY -->|allowed| EXEC["execute_action\nidempotent write tool\nattempt++ transactionally"]
     POLICY -->|"refused + escalate"| ESC
-    POLICY -->|"refused, no escalate<br/>(opted_out · daily cap)"| STOP[STOPPED<br/>terminal]
+    POLICY -->|"refused, no escalate\n(opted_out · daily cap)"| STOP["STOPPED\nterminal"]
     EXEC -->|"agent chose wait/stop"| STOP
-    EXEC --> AWAIT[observe_outcome<br/>verified payment?]
-    AWAIT -->|yes| REC[RECOVERED<br/>terminal]
-    AWAIT -->|no| STOPRULES{check_stopping_rules<br/>deterministic}
+    EXEC --> AWAIT["observe_outcome\nverified payment?"]
+    AWAIT -->|yes| REC["RECOVERED\nterminal"]
+    AWAIT -->|no| STOPRULES{"check_stopping_rules\ndeterministic"}
     STOPRULES -->|within limits| SELECT
     STOPRULES -->|exhausted| ESC
 ```
@@ -96,13 +96,13 @@ LangGraph's recursion-limit pattern is replaced by plain conditional edges (Fast
 
 ```mermaid
 sequenceDiagram
-    participant E as Event (invoice-overdue)
-    participant G as Agent graph
-    participant L as LLM (mock/swappable)
-    participant P as PolicyEngine
-    participant T as Write tools
-    participant W as Outcome poller
-    participant DB as Postgres audit_log
+    participant E as "Event (invoice-overdue)"
+    participant G as "Agent graph"
+    participant L as "LLM (mock/swappable)"
+    participant P as "PolicyEngine"
+    participant T as "Write tools"
+    participant W as "Outcome poller"
+    participant DB as "Postgres audit_log"
 
     E->>G: ingest case
     G->>DB: build_context (reads via tools only)
@@ -149,14 +149,14 @@ erDiagram
 
     CASES {
         string id PK
-        enum status "NEW→DIAGNOSED→ACTION_SELECTED→EXECUTING→AWAITING_OUTCOME→RECOVERED/ESCALATED/STOPPED (CHECK-constrained)"
+        string status "NEW→DIAGNOSED→ACTION_SELECTED→EXECUTING→AWAITING_OUTCOME→RECOVERED/ESCALATED/STOPPED (CHECK-constrained)"
         int attempt_count "explicit loop bound"
         int messages_sent_today "daily-capped"
         float amount_at_risk
     }
     AUDIT_LOG {
         int id PK
-        actor "agent | policy | human | system"
+        string actor "agent | policy | human | system"
         jsonb payload "includes config_snapshot per decision"
         text reasoning "audit-only, never branched on"
     }
