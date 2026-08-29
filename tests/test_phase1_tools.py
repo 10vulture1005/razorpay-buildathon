@@ -58,7 +58,7 @@ def test_send_payment_link_and_escalate_idempotent(db, receivable_case):
 
 
 def test_mark_recovered_requires_verified_payment(db, receivable_case):
-    with pytest.raises(AssertionError):
+    with pytest.raises(ToolExecutionError):
         write_tools.mark_recovered(db, receivable_case.id, 1000,
                                    verified_by="llm_hallucination",
                                    verified_payment_id=999999, attempt_number=1)

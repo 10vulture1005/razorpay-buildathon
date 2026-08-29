@@ -20,12 +20,26 @@ import app.config as config
 
 class BodySizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
+        # Check declared Content-Length first (fast path).
         length = request.headers.get("content-length")
-        if length is not None and int(length) > config.MAX_BODY_BYTES:
-            return JSONResponse(
-                {"detail": "Request body too large"},
-                status_code=413,
-            )
+        if length is not None:
+            try:
+                if int(length) > config.MAX_BODY_BYTES:
+                    return JSONResponse(
+                        {"detail": "Request body too large"},
+                        status_code=413,
+                    )
+            except ValueError:
+                pass  # malformed header — let the framework handle it
+        # Also guard against chunked/missing Content-Length by reading the body
+        # up to the limit.  If the body exceeds the cap, reject.
+        if request.method in ("POST", "PUT", "PATCH"):
+            body = await request.body()
+            if len(body) > config.MAX_BODY_BYTES:
+                return JSONResponse(
+                    {"detail": "Request body too large"},
+                    status_code=413,
+                )
         return await call_next(request)
 
 
@@ -77,8 +91,7 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         token = correlation_id_var.set(cid)
         try:
             response = await call_next(request)
+            response.headers["X-Request-ID"] = cid
+            return response
         finally:
-            pass
-        response.headers["X-Request-ID"] = cid
-        correlation_id_var.reset(token)
-        return response
+            correlation_id_var.reset(token)

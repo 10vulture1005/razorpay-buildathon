@@ -332,25 +332,29 @@ export default function Landing() {
       {/* ========================= FINAL CTA ========================== */}
       <section className="sol-final">
         <div className="sol-final-glow" aria-hidden />
+        <div className="sol-final-backdrop" aria-hidden />
+        
         <Reveal className="sol-final-inner">
-          <h2>Watch it work on real data</h2>
-          <p>
-            The dashboard polls the same API your billing system integrates with. Every
-            diagnosis, every action, every policy block — as they happen.
-          </p>
-          <form className="sol-cta-form" onSubmit={onCta}>
-            <input
-              type="email"
-              placeholder="Enter your work email"
-              aria-label="Work email"
-            />
-            <button type="submit">
-              OPEN THE DASHBOARD
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          <div className="sol-final-card">
+            <div className="sol-final-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
               </svg>
-            </button>
-          </form>
+            </div>
+            <h2>Watch it work on real data</h2>
+            <p>
+              The dashboard polls the same API your billing system integrates with. Every
+              diagnosis, every action, every policy block — as they happen.
+            </p>
+            <form className="sol-cta-form" onSubmit={onCta}>
+              <button type="submit" className="sol-cta-btn sol-cta-btn-large">
+                <span>OPEN THE DASHBOARD</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </form>
+          </div>
         </Reveal>
       </section>
     </main>

@@ -237,21 +237,13 @@ export default function HeroSplash({
       {/* live gradient layer — fades in over the section's static fallback
           gradient on first tick, masking the SSR→real-time theme handoff */}
       <div
-        className={`splash-bg splash-bg-live${mounted ? " splash-on" : ""}`}
+        className={`splash-bg splash-bg-live`}
         aria-hidden
       />
 
       {/* grainy texture overlay */}
       <div className="splash-grain" aria-hidden />
 
-      {/* top info bar */}
-      <header className="splash-topbar">
-        <span className="splash-clock">{mounted ? formatClock(now!) : "--:--:-- --"}</span>
-        <span className="splash-sep" aria-hidden />
-        <span className="splash-status">
-          CURRENTLY <b>{theme.dominant.label}</b> IN <b>BENGALURU, IN</b>
-        </span>
-      </header>
 
       {/* centered icon + headline */}
       <div className="splash-center" ref={centerRef}>

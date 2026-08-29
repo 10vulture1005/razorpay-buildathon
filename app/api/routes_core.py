@@ -190,7 +190,7 @@ def list_cases(status: str | None = None, limit: int = 500, db: Session = Depend
         {"case_id": c.id, "customer_id": c.customer_id, "invoice_id": c.invoice_id,
          "status": c.status.value, "amount_at_risk": c.amount_at_risk,
          "attempt_count": c.attempt_count, "last_action": c.last_action}
-        for c in q.order_by(Case.created_at).limit(min(limit, 1000)).all()
+        for c in q.order_by(Case.created_at).limit(max(1, min(limit, 1000))).all()
     ]
 
 
@@ -209,7 +209,7 @@ def list_tickets(status: str = "open", limit: int = 100, db: Session = Depends(g
     q = db.query(EscalationTicket).order_by(EscalationTicket.created_at.desc())
     if status != "all":
         q = q.filter(EscalationTicket.status == status)
-    for t in q.limit(min(limit, 500)).all():
+    for t in q.limit(max(1, min(limit, 500))).all():
         case = db.get(Case, t.case_id)
         if not case:
             continue
@@ -343,14 +343,20 @@ def _parse_razorpay_event(raw: bytes) -> tuple[str | None, str | None, float | N
     """Returns (razorpay_event_type, invoice_reference, amount_inr, payment_entity_id)."""
     import json as _json
 
-    body = _json.loads(raw)
+    try:
+        body = _json.loads(raw)
+    except (ValueError, TypeError):
+        return None, None, None, None
     event_type = body.get("event")
     if event_type not in ("payment_link.paid", "payment.captured"):
         return event_type, None, None, None
-    entity = body.get("payload", {}).get("payment", {}).get("entity") or {}
-    amount_inr = round((entity.get("amount") or 0) / 100.0, 2)
-    reference = (entity.get("notes") or {}).get("reference_id") or entity.get("description")
-    return event_type, reference, (amount_inr if amount_inr > 0 else None), entity.get("id")
+    try:
+        entity = body.get("payload", {}).get("payment", {}).get("entity") or {}
+        amount_inr = round((entity.get("amount") or 0) / 100.0, 2)
+        reference = (entity.get("notes") or {}).get("reference_id") or entity.get("description")
+        return event_type, reference, (amount_inr if amount_inr > 0 else None), entity.get("id")
+    except (TypeError, AttributeError, ArithmeticError):
+        return event_type, None, None, None
 
 
 @router.post("/webhooks/payment")

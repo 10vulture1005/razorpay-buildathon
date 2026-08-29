@@ -252,13 +252,18 @@ def mark_recovered(
 ) -> dict:
     """Only fires on a verified payment event. The precondition is an actual assertion —
     an LLM hallucinating success must fail here, hard."""
-    assert verified_by == "payment_poller", (
-        f"mark_recovered requires verified_by='payment_poller', got {verified_by!r}"
-    )
+    if verified_by != "payment_poller":
+        raise ToolExecutionError(
+            f"mark_recovered requires verified_by='payment_poller', got {verified_by!r}",
+            retryable=False,
+        )
     payment = db.get(PaymentEvent, verified_payment_id)
-    assert payment is not None and payment.invoice_id == _get_case(db, case_id).invoice_id, (
-        f"no backing payment_events row id={verified_payment_id} for case {case_id}"
-    )
+    case = _get_case(db, case_id)
+    if payment is None or payment.invoice_id != case.invoice_id:
+        raise ToolExecutionError(
+            f"no backing payment_events row id={verified_payment_id} for case {case_id}",
+            retryable=False,
+        )
 
     def do():
         record, key = _idempotent_execute(db, case_id, "mark_recovered", attempt_number)

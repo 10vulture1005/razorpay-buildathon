@@ -343,6 +343,7 @@ def _client(tier: str = "frontier"):
 _CLIENT = _client()
 _FALLBACK_CLIENT: OpenRouterLLM | None = None
 _FALLBACK_CHECKED = False
+_FALLBACK_LOCK = __import__("threading").Lock()
 
 
 def _fallback_client() -> OpenRouterLLM | None:
@@ -352,27 +353,30 @@ def _fallback_client() -> OpenRouterLLM | None:
     global _FALLBACK_CLIENT, _FALLBACK_CHECKED
     if _FALLBACK_CHECKED:
         return _FALLBACK_CLIENT
-    _FALLBACK_CHECKED = True
-    api_key = getattr(config, "NVIDIA_API_KEY", "")
-    if not api_key or os.environ.get("LLM_PROVIDER") != "openrouter":
-        return None
-    base_url = getattr(config, "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-    # llama-3.3-70b is the tested-fast choice (~20s); deepseek-v4-flash works
-    # but has exhibited multi-minute cold starts under congestion.
-    frontier = os.environ.get("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
-    small = os.environ.get("NVIDIA_SMALL_MODEL", frontier)
-    try:
-        _FALLBACK_CLIENT = OpenRouterLLM(
-            api_key=api_key, base_url=base_url,
-            model_map={"frontier": frontier, "small": small},
-        )
-        # Fallback hosts (NVIDIA) can cold-start slowly; only used when the
-        # primary already failed, so a long timeout is acceptable here.
-        _FALLBACK_CLIENT.timeout_s = 180.0
-        logger.warning("llm.fallback_armed | provider=nvidia models=%s/%s", frontier, small)
-    except RuntimeError:
-        _FALLBACK_CLIENT = None
-    return _FALLBACK_CLIENT
+    with _FALLBACK_LOCK:
+        if _FALLBACK_CHECKED:  # double-check under lock
+            return _FALLBACK_CLIENT
+        _FALLBACK_CHECKED = True
+        api_key = getattr(config, "NVIDIA_API_KEY", "")
+        if not api_key or os.environ.get("LLM_PROVIDER") != "openrouter":
+            return None
+        base_url = getattr(config, "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+        # llama-3.3-70b is the tested-fast choice (~20s); deepseek-v4-flash works
+        # but has exhibited multi-minute cold starts under congestion.
+        frontier = os.environ.get("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
+        small = os.environ.get("NVIDIA_SMALL_MODEL", frontier)
+        try:
+            _FALLBACK_CLIENT = OpenRouterLLM(
+                api_key=api_key, base_url=base_url,
+                model_map={"frontier": frontier, "small": small},
+            )
+            # Fallback hosts (NVIDIA) can cold-start slowly; only used when the
+            # primary already failed, so a long timeout is acceptable here.
+            _FALLBACK_CLIENT.timeout_s = 180.0
+            logger.warning("llm.fallback_armed | provider=nvidia models=%s/%s", frontier, small)
+        except RuntimeError:
+            _FALLBACK_CLIENT = None
+        return _FALLBACK_CLIENT
 
 
 def call_structured(schema: type[BaseModel], prompt: dict, tier: str = "frontier") -> BaseModel:
