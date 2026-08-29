@@ -15,4 +15,10 @@ regexes = [
   '''change-me-[a-z-]+''',
   '''dev-(admin|run|read)-key''',
   '''(test|ci)-(admin|run|read)-key''',
+  # CI fixture values (preflight-prod job) — never used in real environments.
+  '''key-ci-[0-9a-f]{16}''',
+  '''secret-ci-[0-9a-f]{16}''',
+  '''webhook-secret-ci-[0-9a-f]{16}''',
+  '''sk-or-ci-[a-z0-9-]+''',
+  '''rzp_test_ci_[a-z0-9]+''',
 ]

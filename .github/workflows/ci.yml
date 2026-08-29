@@ -89,8 +89,18 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: sqlite:///./.ci_recovery.db
-      API_KEYS: ci-admin-key-1234567890ab:admin,ci-run-key-1234567890ab:run,read,ci-read-key-1234567890ab:read
+      # API_KEYS MUST match tests/conftest.py — otherwise every authenticated
+      # request gets a 401. The keys themselves are placeholders; conftest
+      # hard-pins them and the gitleaks allowlist regexes catch the literal
+      # strings so this doesn't trigger secret scanning.
+      API_KEYS: test-admin-key-1234567890ab:admin,test-run-key-1234567890ab:run,read,test-read-key-1234567890ab:read
       ENVIRONMENT: dev
+      LLM_PROVIDER: mock
+      PAYMENT_PROVIDER: console
+      EMAIL_PROVIDER: console
+      ALLOW_MOCK_ADAPTERS: "true"
+      PAYMENT_WEBHOOK_SECRET: test-webhook-secret-1234567890ab
+      RAZORPAY_WEBHOOK_SECRET: test-webhook-secret-1234567890ab
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

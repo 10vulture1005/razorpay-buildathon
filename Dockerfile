@@ -68,7 +68,7 @@ ENV WEB_CONCURRENCY=2 \
     UVICORN_TIMEOUT_KEEP_ALIVE=30 \
     UVICORN_LOG_LEVEL=info
 
-HEALTHCHECK --interval=30s --timeout=5s --start_period=15s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')" || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
