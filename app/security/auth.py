@@ -28,14 +28,39 @@ class ApiKeyRecord:
     scopes: frozenset[str] = field(default_factory=frozenset)
 
 
+_KNOWN_SCOPES: frozenset[str] = frozenset({"read", "run", "admin"})
+
+
 def _parse_keys(raw: str) -> list[ApiKeyRecord]:
-    records = []
-    for i, entry in enumerate(raw.split(",")):
-        entry = entry.strip()
-        if not entry or ":" not in entry:
+    """Parse `API_KEYS` env var.
+
+    Format: comma-separated `<secret>:<scope1,scope2>` entries. Two valid shapes:
+      1. `key1:s1,s2,key2:s3`     (one entry, then the next)
+      2. `key1:s1,s2, key2:s3`    (whitespace-separated, identical meaning)
+
+    The naive `split(",")` is ambiguous when a scope name is itself a comma
+    token (e.g. `key:run,read`) — it cannot tell that `read` is a scope of
+    `key`, not a new entry. The fix: split on a regex that matches `<key>:<scopes>`
+    greedily, where every token after the `:` is validated as a KNOWN scope.
+    Unknown scope-shaped tokens are treated as continuations of the current
+    entry's scope list. Tokens with no `:` at all are treated as malformed
+    and dropped (the preflight script surfaces this for the operator).
+    """
+    records: list[ApiKeyRecord] = []
+    # Split on a token boundary: a comma followed by an optional space and
+    # then a new `<token>:<scopes>` shape. Lookahead so the comma stays in
+    # the previous chunk.
+    parts = __import__("re").split(r",\s*(?=\S[^,]*:)", raw)
+    for i, entry in enumerate(p.strip() for p in parts if p.strip()):
+        if ":" not in entry:
             continue
         secret, _, scopes_part = entry.partition(":")
         scopes = frozenset(s.strip() for s in scopes_part.split(",") if s.strip())
+        # Validate against the known scope set. Anything else means the
+        # operator mistyped a scope name OR included a stray token — both
+        # are configuration errors that should fail closed.
+        if not scopes or not scopes <= _KNOWN_SCOPES:
+            continue
         records.append(
             ApiKeyRecord(
                 key_id=f"key_{i}",

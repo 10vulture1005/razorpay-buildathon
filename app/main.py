@@ -24,7 +24,10 @@ logger = logging.getLogger("app.main")
 
 def _prod_startup_guard():
     """Refuse to boot production without explicit credentials and REAL providers.
-    Dev-only echo adapters (console) and the heuristic mock LLM are forbidden."""
+    Dev-only echo adapters (console) and the heuristic mock LLM are forbidden.
+    The full preflight is run via `python -m scripts.preflight`; this in-process
+    guard is the last-mile safety net so a misconfigured container fail-fasts
+    loudly at startup rather than at first request."""
     if not config.IS_PROD:
         return
     if "API_KEYS" not in __import__("os").environ:
@@ -37,7 +40,7 @@ def _prod_startup_guard():
         )
     if config.EMAIL_PROVIDER == "console":
         raise RuntimeError(
-            "ENVIRONMENT=prod requires a real EMAIL_PROVIDER (smtp | resend | sendgrid)"
+            "ENVIRONMENT=prod requires a real EMAIL_PROVIDER (smtp | resend | sendgrid | mailgun)"
         )
     if config.PAYMENT_PROVIDER != "razorpay":
         raise RuntimeError("ENVIRONMENT=prod requires PAYMENT_PROVIDER=razorpay")
@@ -45,6 +48,16 @@ def _prod_startup_guard():
         raise RuntimeError("ENVIRONMENT=prod requires RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET")
     if not config.PAYMENT_WEBHOOK_SECRET:
         raise RuntimeError("ENVIRONMENT=prod requires RAZORPAY_WEBHOOK_SECRET")
+    # Catch the "shipped with localhost DATABASE_URL" failure mode here too —
+    # the preflight script covers it, but the in-process guard is the only
+    # thing that runs in every container regardless of CI discipline.
+    if "sqlite" in config.DATABASE_URL:
+        raise RuntimeError("ENVIRONMENT=prod requires a Postgres DATABASE_URL")
+    if "localhost" in config.DATABASE_URL or "127.0.0.1" in config.DATABASE_URL:
+        raise RuntimeError(
+            "ENVIRONMENT=prod DATABASE_URL points at localhost — set it to the "
+            "managed Postgres instance"
+        )
 
 
 def _verify_schema():

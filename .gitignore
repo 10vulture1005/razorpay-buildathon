@@ -34,3 +34,23 @@ out/
 .kiro/
 .opencode/
 .pi/
+
+# Internal docs kept locally but never re-tracked.
+# (Removed from git in 2941b64's follow-up. The 00-08 phase files, the
+# 14-day plan, and the EVALS/TESTING/PRODUCT/explain/features docs are
+# kept on disk for historical context but are NOT part of the public repo.)
+00-README.md
+01-phase0-repo-and-schema.md
+02-phase1-tools-layer.md
+03-phase2-policy-engine.md
+04-phase3-langgraph-agent.md
+05-phase4-outcome-and-stopping.md
+06-phase5-evals-and-audit.md
+07-phase6-dashboard-and-demo.md
+08-phase7-optional-extension.md
+plan.md
+EVALS.md
+TESTING.md
+PRODUCT.md
+explain.md
+features.md

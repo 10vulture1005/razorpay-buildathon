@@ -6,7 +6,12 @@ x-app-env: &appenv
     - path: .env
       required: false
   environment:
+    # For local dev only: talk to the docker-compose Postgres. In production
+    # (Render / Fly / k8s) override DATABASE_URL via the host's secret store
+    # to point at the managed instance.
     DATABASE_URL: postgresql+psycopg2://recovery:recovery@db:5432/recovery
+    # Multi-worker uvicorn — 2 workers per Render free plan.
+    WEB_CONCURRENCY: "2"
 
 services:
   db:
@@ -27,15 +32,19 @@ services:
 
   # Migrations run as an explicit one-shot step BEFORE api/worker start (P1-6).
   migrate:
-    build: .
-    command: ["python", "-m", "scripts.migrate", "upgrade", "head"]
+    build:
+      context: .
+      target: migrate
     <<: *appenv
     depends_on:
       db:
         condition: service_healthy
+    restart: "no"   # one-shot, never restart
 
   api:
-    build: .
+    build:
+      context: .
+      target: api
     <<: *appenv
     ports:
       - "8000:8000"
@@ -47,15 +56,19 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+      start_period: 20s
+    restart: unless-stopped
 
   worker:
-    build: .
-    command: ["python", "-m", "app.workers.outcome_poller", "30"]
+    build:
+      context: .
+      target: worker
     <<: *appenv
     depends_on:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+    # No port binding — the worker is a poller, not an HTTP service.
 
 volumes:
   pgdata:

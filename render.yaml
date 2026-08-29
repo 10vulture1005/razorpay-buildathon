@@ -1,0 +1,141 @@
+# Render Blueprint — one-click deploy
+# https://render.com/docs/blueprint-spec
+#
+# Pre-deploy checklist (do these in the Render dashboard BEFORE clicking
+# "Apply"; values are NOT pulled from your .env file):
+#
+#   1. Create a new Secret File or set Environment Variables on each service
+#      with the ROTATED values (see DEPLOY.md §0):
+#        OPENROUTER_API_KEY
+#        RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET / RAZORPAY_WEBHOOK_SECRET
+#        MAILGUN_API_KEY / MAILGUN_DOMAIN / MAILGUN_WEBHOOK_SIGNING_KEY
+#        API_KEYS (comma-separated "<secret>:<scope,scope>" entries)
+#        NVIDIA_API_KEY (optional fallback)
+#
+#   2. The DATABASE_URL below uses Render's internal hostname; copy the
+#      "Internal Connection String" from the db service into the api + worker
+#      services' environment variables as DATABASE_URL.
+#
+#   3. For the dashboard (dashboard-next static site), set:
+#        API_URL  = the public URL of the api service
+#        API_KEY  = a READ-scope key (frontend only reads; it never runs)
+#        NEXT_PUBLIC_API_BASE_URL = the public URL of the api service
+#
+# Once secrets are set, click "Apply" on this Blueprint. Migrations run
+# automatically before the API/worker boot (migrate service).
+
+services:
+  - type: pserv
+    name: recovery-db
+    plan: starter
+    env: docker
+    docker:
+      command: []
+    # Managed Postgres; do NOT use the docker-compose db service in prod.
+    # The pserv type is auto-routed to a managed Postgres instance on Render.
+    ipAllowList: []  # only allow internal connections
+    healthCheckPath: /_health
+
+  - type: worker
+    name: recovery-migrate
+    plan: starter
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./Dockerfile
+    dockerCommand: ["python", "-m", "scripts.migrate", "upgrade", "head"]
+    envVars:
+      - key: DATABASE_URL
+        fromService:
+          type: pserv
+          name: recovery-db
+          property: connectionString
+      - key: ENVIRONMENT
+        value: prod
+    autoDeploy: false  # run explicitly via "Manual Deploy" / pre-deploy hook below
+
+  - type: web
+    name: recovery-api
+    plan: starter
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /readyz
+    preDeployCommand: "python -m scripts.migrate upgrade head"
+    envVars:
+      - key: DATABASE_URL
+        fromService:
+          type: pserv
+          name: recovery-db
+          property: connectionString
+      - key: ENVIRONMENT
+        value: prod
+      - key: LLM_PROVIDER
+        value: openrouter
+      - key: MODEL_FRONTIER
+        value: minimax/minimax-m3:free
+      - key: MODEL_SMALL
+        value: minimax/minimax-m3:free
+      - key: ALLOW_MOCK_ADAPTERS
+        value: "false"
+      - key: EMAIL_PROVIDER
+        value: mailgun
+      - key: PAYMENT_PROVIDER
+        value: razorpay
+      - key: WRITE_TOOLS_ENABLED
+        value: "true"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "120"
+      - key: MAX_BODY_BYTES
+        value: "65536"
+      # Secrets below are intentionally NOT set here — set them in the
+      # Render dashboard's "Environment" tab for this service so they live
+      # in Render's secret store, not in source control:
+      #   OPENROUTER_API_KEY, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET,
+      #   RAZORPAY_WEBHOOK_SECRET, MAILGUN_API_KEY, MAILGUN_DOMAIN,
+      #   MAILGUN_WEBHOOK_SIGNING_KEY, API_KEYS, CORS_ORIGINS, NVIDIA_API_KEY
+
+  - type: worker
+    name: recovery-worker
+    plan: starter
+    runtime: docker
+    rootDir: .
+    dockerfilePath: ./Dockerfile
+    dockerCommand: ["python", "-m", "app.workers.outcome_poller", "30"]
+    envVars:
+      - key: DATABASE_URL
+        fromService:
+          type: pserv
+          name: recovery-db
+          property: connectionString
+      - key: ENVIRONMENT
+        value: prod
+      - key: LLM_PROVIDER
+        value: openrouter
+      - key: MODEL_FRONTIER
+        value: minimax/minimax-m3:free
+      - key: MODEL_SMALL
+        value: minimax/minimax-m3:free
+      - key: ALLOW_MOCK_ADAPTERS
+        value: "false"
+      - key: EMAIL_PROVIDER
+        value: mailgun
+      - key: PAYMENT_PROVIDER
+        value: razorpay
+      - key: POLL_INTERVAL_S
+        value: "30"
+      # Same secret set as the API service.
+
+  - type: static
+    name: recovery-dashboard
+    plan: starter
+    runtime: static
+    rootDir: frontend-next
+    buildCommand: "npm ci && npm run build"
+    staticPublishPath: frontend-next/out
+    envVars:
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false  # set in dashboard after the api service has a URL
+      - key: API_KEY
+        sync: false
+      - key: API_URL
+        sync: false

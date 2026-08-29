@@ -6,7 +6,6 @@ escalation), a hard-gated Policy Engine approves or refuses every action, and ev
 lands in a queryable audit trail. Architected to extend to Failed Payment Recovery through the
 same graph — proven by Phase 7.
 
-Built against the 8-phase plan (`00-README.md` … `08-phase7-optional-extension.md`).
 See `PRODUCTION.md` for full system documentation plus the production-readiness
 gap analysis and phased rollout plan.
 

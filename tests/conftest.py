@@ -12,12 +12,12 @@ os.environ.setdefault("LLM_PROVIDER", "mock")
 os.environ.setdefault("ENVIRONMENT", "dev")
 os.environ.setdefault(
     "API_KEYS",
-    "test-admin-key:admin,test-run-key:run,read,test-read-key:read",
+    "test-admin-key-1234567890ab:admin,test-run-key-1234567890ab:run,read,test-read-key-1234567890ab:read",
 )
 # Hard-set (not setdefault) and pin BOTH webhook-secret names: config prefers
 # RAZORPAY_WEBHOOK_SECRET, and a developer's .env must never leak into tests.
-os.environ["PAYMENT_WEBHOOK_SECRET"] = "test-webhook-secret"
-os.environ["RAZORPAY_WEBHOOK_SECRET"] = "test-webhook-secret"
+os.environ["PAYMENT_WEBHOOK_SECRET"] = "test-webhook-secret-1234567890ab"
+os.environ["RAZORPAY_WEBHOOK_SECRET"] = "test-webhook-secret-1234567890ab"
 # Hermetic providers: a dev .env with PAYMENT_PROVIDER=razorpay / real email
 # credentials would otherwise make graph tests call live APIs.
 os.environ["PAYMENT_PROVIDER"] = "console"
@@ -26,9 +26,9 @@ for _k in ("RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"):
     os.environ.pop(_k, None)
 os.environ.setdefault("ALLOW_MOCK_ADAPTERS", "true")
 
-TEST_ADMIN_KEY = "test-admin-key"
-TEST_RUN_KEY = "test-run-key"
-TEST_READ_KEY = "test-read-key"
+TEST_ADMIN_KEY = "test-admin-key-1234567890ab"
+TEST_RUN_KEY = "test-run-key-1234567890ab"
+TEST_READ_KEY = "test-read-key-1234567890ab"
 ADMIN_HEADERS = {"X-API-Key": TEST_ADMIN_KEY}
 
 import pytest

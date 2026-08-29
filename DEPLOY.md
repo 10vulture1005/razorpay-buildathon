@@ -7,6 +7,33 @@ targets (Render, Fly.io, a single VPS), plus the security preflight
 
 ---
 
+## Quick start (one-click on Render)
+
+The repo ships a `render.yaml` Blueprint that provisions **everything**:
+managed Postgres, the API service, the worker, the dashboard, and a
+release-phase migration step. One click on Render creates the whole
+stack.
+
+1. Fork or import this repo into your GitHub org.
+2. In Render, **New → Blueprint**, point it at the repo.
+3. Render reads `render.yaml` and offers to create 4 services:
+   `recovery-db` (Postgres), `recovery-migrate` (one-shot release),
+   `recovery-api` (web), `recovery-worker` (background worker), and
+   `recovery-dashboard` (static site).
+4. After they're created, open each service → **Environment** → set
+   the secrets listed in `render.yaml` (the file is annotated; secrets
+   are intentionally left blank and must be set in the dashboard).
+5. Click **Manual Deploy** on the migrate service first; once it
+   succeeds, the API and worker will start.
+6. Visit the API service's URL, hit `/readyz` — should return 200.
+7. Run `python -m scripts.preflight --env prod` from your local shell
+   with the same env vars to confirm the configuration is sound.
+
+> If you'd rather set up the services by hand, follow §2 below — the
+> Blueprint is just a declarative shortcut to the same result.
+
+---
+
 ## 0. Security preflight — DO THIS FIRST
 
 Your local `.env` contains live secrets pasted during development
@@ -37,6 +64,40 @@ Rotation checklist (do these in order):
 
 > **Never** put real secrets in `.env.example` (it's committed). All
 > real values must live in the host's secret manager.
+
+---
+
+## 0.5 Configuration preflight — `scripts/preflight.py`
+
+Before deploying, run the in-repo preflight script against the **same
+environment variables** the production service will see. The script
+catches the most common production-misconfig failure modes *before*
+they cause a 3am page:
+
+```bash
+python -m scripts.preflight --env prod
+```
+
+It validates (against prod rules):
+
+- `API_KEYS` exists, all entries are ≥16 chars, no placeholder/dev values, scopes are valid (`read`/`run`/`admin`), at least one admin scope
+- `CORS_ORIGINS` is non-empty, no `*`, no `http://` in prod
+- `LLM_PROVIDER=openrouter` and `OPENROUTER_API_KEY` is set
+- `EMAIL_PROVIDER != console`, `EMAIL_FROM` looks real, Mailgun/SMTP/Resend/SendGrid credentials are present when their adapter is selected
+- `PAYMENT_PROVIDER=razorpay`, `RAZORPAY_KEY_ID` starts with `rzp_live_` or `rzp_test_`, `RAZORPAY_KEY_SECRET` and webhook secrets are set
+- `DATABASE_URL` is Postgres (not SQLite) and not pointing at localhost
+- `ALLOW_MOCK_ADAPTERS=false`
+- `WRITE_TOOLS_ENABLED` set sensibly (warns if `false` in prod)
+- `RATE_LIMIT_PER_MINUTE` and `MAX_BODY_BYTES` are sane
+- `LOG_LEVEL != DEBUG` in prod
+
+The preflight also runs in CI as a separate job, so misconfigurations
+that would have shipped fail the PR instead.
+
+A subset of these checks also runs in-process at API startup
+(`_prod_startup_guard` in `app/main.py`) as a last-mile safety net so
+a misconfigured container fail-fasts loudly instead of at first
+request.
 
 ---
 

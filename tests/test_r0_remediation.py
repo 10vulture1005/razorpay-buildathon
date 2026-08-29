@@ -199,5 +199,5 @@ def test_payment_failed_updates_decline_code_on_existing_card(client):
 
 def test_payment_failed_requires_run_scope(client):
     r = client.post("/events/payment-failed", json={
-        "customer_id": "x", "amount": 1.0}, headers={"X-API-Key": "test-read-key"})
+        "customer_id": "x", "amount": 1.0}, headers={"X-API-Key": "test-read-key-1234567890ab"})
     assert r.status_code == 403

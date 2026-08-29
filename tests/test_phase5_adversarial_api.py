@@ -136,7 +136,7 @@ def test_webhook_replay_is_deduplicated(client, db):
     db.commit()
     payload = {"event_id": "evt_adv_replay_1", "invoice_id": case.invoice_id,
                "amount_paid": case.amount_at_risk}
-    req = _signed_webhook(payload, "test-webhook-secret")
+    req = _signed_webhook(payload, "test-webhook-secret-1234567890ab")
     r1 = client.post("/webhooks/payment", content=req["raw"], headers=req["headers"]).json()
     r2 = client.post("/webhooks/payment", content=req["raw"], headers=req["headers"]).json()
     assert r1["status"] == "accepted" and r1.get("matched") is True

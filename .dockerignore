@@ -1,0 +1,57 @@
+# Keep the Docker build context small and the image free of secrets.
+# Mirrors .gitignore but adds a few patterns specific to Docker.
+
+# Secrets / local config (NEVER bake into an image)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local dev artifacts
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.db
+*.sqlite3
+*.log
+
+# Frontend (built inside the image, not copied)
+frontend-next/node_modules/
+frontend-next/.next/
+frontend-next/out/
+frontend-next/.turbo/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# CI / tooling scratch
+.github/
+.git/
+.gitignore
+*.md
+tests/
+scripts/diagnose_each_type.*
+
+# Docs that aren't part of the runtime
+00-README.md
+01-phase0-repo-and-schema.md
+02-phase1-tools-layer.md
+03-phase2-policy-engine.md
+04-phase3-langgraph-agent.md
+05-phase4-outcome-and-stopping.md
+06-phase5-evals-and-audit.md
+07-phase6-dashboard-and-demo.md
+08-phase7-optional-extension.md
+plan.md
+EVALS.md
+TESTING.md
+PRODUCT.md
+explain.md
+features.md
+DEPLOY.md
+PRODUCTION.md

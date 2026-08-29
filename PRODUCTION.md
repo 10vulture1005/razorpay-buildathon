@@ -1,8 +1,7 @@
 # Revenue Recovery Autopilot — System Documentation & Production Plan
 
-**Status of this document:** supersedes nothing — it complements `plan.md` (original MVP
-architecture), `README.md` (what is built and verified today), and `PRODUCT.md` (product
-intent). This file has two halves:
+**Status of this document:** complements `README.md` (what is built and
+verified today) and `DEPLOY.md` (the deploy playbook). This file has two halves:
 
 - **Part A — System Documentation:** what the system is, how it works, how to run it.
 - **Part B — Production-Readiness Plan:** gap analysis of the current MVP vs. a deployable
