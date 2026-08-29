@@ -30,6 +30,7 @@ def client():
 
 def _make_awaiting_case(db, suffix, amount=12000.0):
     from app.api.routes_core import invoice_overdue, InvoiceOverdueEvent
+    from app.policy.policy_engine import load_policy_config
 
     # Module-scoped DB: retire leftovers from earlier tests so counts stay exact.
     for stale in db.query(Case).filter(
@@ -46,6 +47,16 @@ def _make_awaiting_case(db, suffix, amount=12000.0):
     case.status = CaseStatus.AWAITING_OUTCOME
     case.last_action = "send_payment_link"
     case.last_action_at = datetime.now(timezone.utc) - timedelta(seconds=3600)
+    # The poller sees a real downstream PolicyDecisionRecord but bypasses the
+    # normal agent flow. Mirror the prior policy_check the agent would have
+    # audit-logged so scripts/check_policy_violations.py (the CI gate) does
+    # not flag this as an ungated execution.
+    db.add(AuditLog(
+        case_id=case.id, event_type="policy_check", actor="policy",
+        payload={"proposed_action": "send_payment_link", "allowed": True,
+                 "reason": None, "escalate": False,
+                 "config_snapshot": load_policy_config()},
+    ))
     db.add(PolicyDecisionRecord(
         idempotency_key=f"pollfb_{suffix}:send_payment_link:1",
         case_id=case.id, action="send_payment_link", attempt_number=1,
