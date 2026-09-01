@@ -1,4 +1,4 @@
-# Revenue Recovery Autopilot
+# Revora — Revenue Recovery Autopilot
 
 **B2B Receivables Recovery Agent** — AI proposes, deterministic code decides and executes.
 An agent diagnoses why an invoice is unpaid, picks interventions (reminders, payment links,
